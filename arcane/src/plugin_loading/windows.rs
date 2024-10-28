@@ -72,13 +72,13 @@ pub enum WindowEvent {
 #[derive(Clone, Copy)]
 struct WindowSettings {
     /// The kind of border
-    focus_border: &'static str,
+    focus_border_type: &'static str,
     /// The border type for unfocused windows
-    idle_border: &'static str,
+    other_border_type: &'static str,
     /// Should focus border only be on the sides or all around
-    focus_all_around: bool,
+    focus_full_border: bool,
     /// Should other windows have full borders
-    full_border_windows: bool,
+    all_full_border: bool,
 }
 
 impl PluginSettings for WindowSettings {
@@ -87,30 +87,34 @@ impl PluginSettings for WindowSettings {
     }
 
     fn values(&mut self) -> Box<[SettingsValueCommon]> {
-        Box::new([
+        let all_full_border = self.all_full_border;
+        let mut options = vec![
             SettingsValueCommon {
                 name: "focus_border_type",
                 value: SettingsValue::DropDown(
-                    &mut self.focus_border,
+                    &mut self.focus_border_type,
                     &["Double", "Rounded", "Plain"],
                 ),
             },
             SettingsValueCommon {
                 name: "other_border_type",
                 value: SettingsValue::DropDown(
-                    &mut self.idle_border,
+                    &mut self.other_border_type,
                     &["Double", "Rounded", "Plain"],
                 ),
             },
             SettingsValueCommon {
+                name: "all_full_border",
+                value: SettingsValue::Toogle(&mut self.all_full_border),
+            },
+        ];
+        if !all_full_border {
+            options.push(SettingsValueCommon {
                 name: "focus_full_border",
-                value: SettingsValue::Toogle(&mut self.focus_all_around),
-            },
-            SettingsValueCommon {
-                name: "other_full_border",
-                value: SettingsValue::Toogle(&mut self.full_border_windows),
-            },
-        ])
+                value: SettingsValue::Toogle(&mut self.focus_full_border),
+            });
+        }
+        options.into_boxed_slice()
     }
 }
 
@@ -154,10 +158,10 @@ impl WindowPlugin {
 impl Plugin for WindowPlugin {
     fn on_load(&mut self, events: &EventManager) -> Result<()> {
         events.dispatch(RegisterSettings(Box::new(WindowSettings {
-            focus_border: "Double",
-            idle_border: "Plain",
-            focus_all_around: false,
-            full_border_windows: false,
+            focus_border_type: "Double",
+            other_border_type: "Plain",
+            focus_full_border: false,
+            all_full_border: false,
         })));
         events.dispatch(SetKeybind {
             name: "window_focus_left",
@@ -277,10 +281,10 @@ impl Plugin for WindowPlugin {
 
             let borders = if self.windows.len() == 1 {
                 Borders::NONE
-            } else if settings.full_border_windows {
+            } else if settings.all_full_border {
                 Borders::ALL
             } else if focused {
-                if settings.focus_all_around {
+                if settings.focus_full_border {
                     Borders::ALL
                 } else {
                     Borders::LEFT | Borders::RIGHT
@@ -293,12 +297,12 @@ impl Plugin for WindowPlugin {
             let (color, border_type) = if focused {
                 (
                     Color::LightYellow,
-                    BorderType::from_str(settings.focus_border).unwrap_or_default(),
+                    BorderType::from_str(settings.focus_border_type).unwrap_or_default(),
                 )
             } else {
                 (
                     Color::LightGreen,
-                    BorderType::from_str(settings.idle_border).unwrap_or_default(),
+                    BorderType::from_str(settings.other_border_type).unwrap_or_default(),
                 )
             };
 
