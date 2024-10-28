@@ -29,6 +29,6 @@ earthly +build --release=false
 ```
 
 ## Windows
-If you want to run the app on the host machine you need to compile it wihtout earthly. If you dont care about that then `earthly +run --release=false` will also work fine on windows assuming.
+If you want to run the app on the host machine you need to compile it wihtout earthly. If you dont care about that then `earthly +run --release=false` will also work fine on windows.
 
 It is 100% possible to do a windows build, but `eathly` is not set up for it, install rust locally and run `cargo build`/`cargo run`
