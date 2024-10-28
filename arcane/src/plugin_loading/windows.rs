@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::mem;
+use std::str::FromStr;
 
 use crossterm::event::{KeyCode, KeyModifiers};
 use dyn_clone::DynClone;
@@ -72,8 +73,12 @@ pub enum WindowEvent {
 struct WindowSettings {
     /// The kind of border
     focus_border: &'static str,
+    /// The border type for unfocused windows
+    idle_border: &'static str,
     /// Should focus border only be on the sides or all around
     focus_all_around: bool,
+    /// Should other windows have full borders
+    full_border_windows: bool,
 }
 
 impl PluginSettings for WindowSettings {
@@ -87,25 +92,25 @@ impl PluginSettings for WindowSettings {
                 name: "focus_border_type",
                 value: SettingsValue::DropDown(
                     &mut self.focus_border,
-                    &["double", "rounded", "plain"],
+                    &["Double", "Rounded", "Plain"],
                 ),
             },
             SettingsValueCommon {
-                name: "focus_box_all_sides",
+                name: "other_border_type",
+                value: SettingsValue::DropDown(
+                    &mut self.idle_border,
+                    &["Double", "Rounded", "Plain"],
+                ),
+            },
+            SettingsValueCommon {
+                name: "focus_full_border",
                 value: SettingsValue::Toogle(&mut self.focus_all_around),
             },
+            SettingsValueCommon {
+                name: "other_full_border",
+                value: SettingsValue::Toogle(&mut self.full_border_windows),
+            },
         ])
-    }
-}
-
-impl WindowSettings {
-    /// Convert the string setting to a enum
-    fn border_type(&self) -> BorderType {
-        match self.focus_border {
-            "double" => BorderType::Double,
-            "rounded" => BorderType::Rounded,
-            _ => BorderType::Plain,
-        }
     }
 }
 
@@ -149,8 +154,10 @@ impl WindowPlugin {
 impl Plugin for WindowPlugin {
     fn on_load(&mut self, events: &EventManager) -> Result<()> {
         events.dispatch(RegisterSettings(Box::new(WindowSettings {
-            focus_border: "double",
+            focus_border: "Double",
+            idle_border: "Plain",
             focus_all_around: false,
+            full_border_windows: false,
         })));
         events.dispatch(SetKeybind {
             name: "window_focus_left",
@@ -270,6 +277,8 @@ impl Plugin for WindowPlugin {
 
             let borders = if self.windows.len() == 1 {
                 Borders::NONE
+            } else if settings.full_border_windows {
+                Borders::ALL
             } else if focused {
                 if settings.focus_all_around {
                     Borders::ALL
@@ -282,15 +291,27 @@ impl Plugin for WindowPlugin {
                 Borders::NONE
             };
             let (color, border_type) = if focused {
-                (Color::LightYellow, settings.border_type())
+                (
+                    Color::LightYellow,
+                    BorderType::from_str(settings.focus_border).unwrap_or_default(),
+                )
             } else {
-                (Color::LightGreen, BorderType::Plain)
+                (
+                    Color::LightGreen,
+                    BorderType::from_str(settings.idle_border).unwrap_or_default(),
+                )
             };
 
             let block = Block::default()
                 .borders(borders)
                 .fg(color)
                 .border_type(border_type);
+
+            let block = if borders.contains(Borders::TOP) {
+                block.title_top(window.name())
+            } else {
+                block
+            };
 
             let Some(area) = layout.get(position) else {
                 continue;

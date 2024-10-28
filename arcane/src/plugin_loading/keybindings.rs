@@ -93,6 +93,13 @@ impl Plugin for KeybindPlugin {
                 key: KeyCode::Enter,
             },
         );
+        self.bindings.insert(
+            "open_keybinds",
+            KeyBind {
+                modifers: KeyModifiers::CONTROL,
+                key: KeyCode::Char('k'),
+            },
+        );
         Ok(())
     }
 
@@ -110,6 +117,31 @@ impl Plugin for KeybindPlugin {
             );
             self.bindings.insert(event.name, event.bind);
         }
+
+        for event in events.read::<KeydownEvent>() {
+            if self.matches("open_keybinds", event) {
+                events.dispatch(WindowEvent::CreateWindow(Box::new(KeybindWindow)));
+            }
+        }
+
         Ok(())
+    }
+}
+
+/// A window to see and configure keybindings
+#[derive(Clone, Copy)]
+struct KeybindWindow;
+
+impl Window for KeybindWindow {
+    fn name(&self) -> String {
+        String::from("Keybinds")
+    }
+
+    fn draw(
+        &self,
+        frame: &mut ratatui::Frame,
+        area: ratatui::prelude::Rect,
+        plugins: &crate::plugin_manager::PluginStore,
+    ) {
     }
 }

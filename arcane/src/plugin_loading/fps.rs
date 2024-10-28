@@ -39,10 +39,6 @@ impl FpsPlugin {
 }
 
 impl Plugin for FpsPlugin {
-    fn on_load(&mut self, events: &EventManager) -> Result<()> {
-        Ok(())
-    }
-
     fn update(&mut self, events: &EventManager, plugins: &PluginStore) -> Result<()> {
         let Some(keybinds) = plugins.get::<KeybindPlugin>() else {
             return Ok(());
