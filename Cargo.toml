@@ -1,0 +1,8 @@
+[workspace]
+resolver = "2"
+members = ["arcane"]
+
+[profile.release]
+lto = "fat"
+strip = true
+codegen-units = 1
