@@ -39,11 +39,7 @@ impl FpsPlugin {
 }
 
 impl Plugin for FpsPlugin {
-    fn update(&mut self, events: &EventManager, plugins: &PluginStore) -> Result<()> {
-        let Some(keybinds) = plugins.get::<KeybindPlugin>() else {
-            return Ok(());
-        };
-
+    fn update(&mut self, events: &mut EventManager, plugins: &PluginStore) -> Result<()> {
         if !self.show_fps {
             return Ok(());
         }

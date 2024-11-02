@@ -46,7 +46,7 @@ pub trait Window: DynClone {
     /// Update call for the window
     fn update(
         &mut self,
-        _events: &EventManager,
+        _events: &mut EventManager,
         _plugins: &PluginStore,
         _focused: bool,
         _id: WindowID,
@@ -163,7 +163,7 @@ impl WindowPlugin {
 }
 
 impl Plugin for WindowPlugin {
-    fn on_load(&mut self, events: &EventManager) -> Result<()> {
+    fn on_load(&mut self, events: &mut EventManager) -> Result<()> {
         events.dispatch(RegisterSettings(Box::new(WindowSettings {
             focus_border_type: "Double",
             other_border_type: "Rounded",
@@ -197,7 +197,7 @@ impl Plugin for WindowPlugin {
 
     fn update(
         &mut self,
-        events: &crate::plugin_manager::EventManager,
+        events: &mut crate::plugin_manager::EventManager,
         plugins: &crate::plugin_manager::PluginStore,
     ) -> color_eyre::eyre::Result<()> {
         let focused_window_id = self
@@ -356,7 +356,7 @@ mod tests {
         }
         fn update(
             &mut self,
-            _events: &super::EventManager,
+            _events: &mut super::EventManager,
             _plugins: &super::PluginStore,
             _focused: bool,
             _id: super::WindowID,

@@ -101,7 +101,7 @@ pub fn get_settings<S: PluginSettings>(store: &PluginStore) -> Option<Ref<S>> {
 }
 
 impl Plugin for SettingsPlugin {
-    fn on_load(&mut self, events: &EventManager) -> Result<()> {
+    fn on_load(&mut self, events: &mut EventManager) -> Result<()> {
         events.dispatch(SetKeybind {
             name: "open_settings",
             bind: KeyBind {
@@ -112,7 +112,7 @@ impl Plugin for SettingsPlugin {
         Ok(())
     }
 
-    fn update(&mut self, events: &EventManager, plugins: &PluginStore) -> Result<()> {
+    fn update(&mut self, events: &mut EventManager, plugins: &PluginStore) -> Result<()> {
         for event in events.read::<RegisterSettings>() {
             let settings = dyn_clone::clone_box(&*event.0);
             self.settings.insert_raw(settings);
@@ -121,9 +121,11 @@ impl Plugin for SettingsPlugin {
         let Some(keybinds) = plugins.get::<KeybindPlugin>() else {
             return Ok(());
         };
-        for event in events.read::<KeydownEvent>() {
+
+        let (reader, mut writer) = events.split();
+        for event in reader.read::<KeydownEvent>() {
             if keybinds.matches("open_settings", event) {
-                events.dispatch(WindowEvent::CreateWindow(Box::new(SettingsWindow::new())));
+                writer.dispatch(WindowEvent::CreateWindow(Box::new(SettingsWindow::new())));
             }
         }
 
@@ -159,7 +161,7 @@ impl Window for SettingsWindow {
 
     fn update(
         &mut self,
-        events: &EventManager,
+        events: &mut EventManager,
         plugins: &PluginStore,
         focused: bool,
         _id: super::windows::WindowID,

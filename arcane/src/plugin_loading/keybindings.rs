@@ -58,7 +58,7 @@ impl KeybindPlugin {
 }
 
 impl Plugin for KeybindPlugin {
-    fn on_load(&mut self, _events: &EventManager) -> Result<()> {
+    fn on_load(&mut self, _events: &mut EventManager) -> Result<()> {
         self.bindings.insert(
             "menu_left",
             KeyBind {
@@ -106,7 +106,7 @@ impl Plugin for KeybindPlugin {
 
     fn update(
         &mut self,
-        events: &crate::plugin_manager::EventManager,
+        events: &mut crate::plugin_manager::EventManager,
         _plugins: &crate::plugin_manager::PluginStore,
     ) -> color_eyre::eyre::Result<()> {
         for event in events.read::<SetKeybind>() {
@@ -119,9 +119,10 @@ impl Plugin for KeybindPlugin {
             self.bindings.insert(event.name, event.bind);
         }
 
-        for event in events.read::<KeydownEvent>() {
+        let (reader, mut writer) = events.split();
+        for event in reader.read::<KeydownEvent>() {
             if self.matches("open_keybinds", event) {
-                events.dispatch(WindowEvent::CreateWindow(Box::new(KeybindWindow)));
+                writer.dispatch(WindowEvent::CreateWindow(Box::new(KeybindWindow)));
             }
         }
 

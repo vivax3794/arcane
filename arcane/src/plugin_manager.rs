@@ -14,7 +14,7 @@ pub trait Plugin: Any {
     ///
     /// # Errors
     /// For whatever reason the plugin wants
-    fn on_load(&mut self, _events: &EventManager) -> Result<()> {
+    fn on_load(&mut self, _events: &mut EventManager) -> Result<()> {
         Ok(())
     }
 
@@ -23,7 +23,7 @@ pub trait Plugin: Any {
     ///
     /// # Errors
     /// Can error I guess :P
-    fn update(&mut self, _events: &EventManager, _plugins: &PluginStore) -> Result<()> {
+    fn update(&mut self, _events: &mut EventManager, _plugins: &PluginStore) -> Result<()> {
         Ok(())
     }
 
@@ -93,7 +93,30 @@ pub struct EventManager {
     read_buffer: AnyMap<dyn Clearable>,
     /// The buffer new events will be written to
     #[debug(skip)]
-    write_buffer: RefCell<AnyMap<dyn Clearable>>,
+    write_buffer: AnyMap<dyn Clearable>,
+}
+
+pub struct EventReader<'e>(&'e AnyMap<dyn Clearable>);
+impl EventReader<'_> {
+    pub fn read<E>(&self) -> &[E]
+    where
+        E: 'static,
+    {
+        match self.0.get::<Vec<E>>() {
+            Some(events) => events.as_slice(),
+            None => &[],
+        }
+    }
+}
+
+pub struct EventWriter<'e>(&'e mut AnyMap<dyn Clearable>);
+impl EventWriter<'_> {
+    pub fn dispatch<E>(&mut self, event: E)
+    where
+        E: 'static,
+    {
+        self.0.entry::<Vec<E>>().or_default().push(event);
+    }
 }
 
 impl EventManager {
@@ -101,17 +124,16 @@ impl EventManager {
     fn new() -> Self {
         Self {
             read_buffer: AnyMap::new(),
-            write_buffer: RefCell::new(AnyMap::new()),
+            write_buffer: AnyMap::new(),
         }
     }
 
     /// Add the event to the correct queue, creates queue if missing.
-    pub fn dispatch<E>(&self, event: E)
+    pub fn dispatch<E>(&mut self, event: E)
     where
         E: 'static,
     {
-        let mut events = self.write_buffer.borrow_mut();
-        events.entry::<Vec<E>>().or_default().push(event);
+        self.write_buffer.entry::<Vec<E>>().or_default().push(event);
     }
 
     /// Returns clones of all events in the queue
@@ -125,12 +147,18 @@ impl EventManager {
         }
     }
 
+    pub fn split(&mut self) -> (EventReader, EventWriter) {
+        let reader = EventReader(&self.read_buffer);
+        let writer = EventWriter(&mut self.write_buffer);
+        return (reader, writer);
+    }
+
     /// Clear the current read buffer, then swap the buffers;
     pub(crate) fn swap_buffers(&mut self) {
         for queue in self.read_buffer.iter_mut() {
             queue.clear();
         }
-        std::mem::swap(&mut self.read_buffer, &mut self.write_buffer.borrow_mut());
+        std::mem::swap(&mut self.read_buffer, &mut self.write_buffer);
     }
 }
 
@@ -244,7 +272,9 @@ impl StateManager {
     /// Call the handle event method of every plugin
     pub(crate) fn update(&mut self) -> Result<()> {
         for plugin in self.plugins.plugins.iter() {
-            plugin.borrow_mut().update(&self.events, &self.plugins)?;
+            plugin
+                .borrow_mut()
+                .update(&mut self.events, &self.plugins)?;
         }
         Ok(())
     }
@@ -259,10 +289,10 @@ impl StateManager {
     }
 
     /// Run on load of all plugins
-    pub(crate) fn on_load(&self) -> Result<()> {
+    pub(crate) fn on_load(&mut self) -> Result<()> {
         event!(Level::INFO, "Running on loads");
         for plugin in self.plugins.plugins.iter() {
-            plugin.borrow_mut().on_load(&self.events)?;
+            plugin.borrow_mut().on_load(&mut self.events)?;
         }
         Ok(())
     }
@@ -322,7 +352,7 @@ mod tests {
 
         #[test]
         fn need_to_swap() {
-            let events = EventManager::new();
+            let mut events = EventManager::new();
             events.dispatch(10_i32);
             events.dispatch(20_i32);
 
@@ -351,6 +381,22 @@ mod tests {
 
             assert_eq!(events.read::<i32>(), [10, 20]);
         }
+
+        #[test]
+        fn split() {
+            let mut events = EventManager::new();
+            events.dispatch(10_i32);
+            events.dispatch(10_i32);
+            events.swap_buffers();
+
+            let (reader, mut writer) = events.split();
+            for _ in reader.read::<i32>() {
+                writer.dispatch(20_i8);
+            }
+
+            events.swap_buffers();
+            assert_eq!(events.read::<i8>(), &[20, 20]);
+        }
     }
 
     #[derive(PartialEq, Eq, Debug, Clone, Copy)]
@@ -359,7 +405,7 @@ mod tests {
     impl Plugin for TestPlugin {
         fn update(
             &mut self,
-            _events: &super::EventManager,
+            _events: &mut super::EventManager,
             _plugins: &PluginStore,
         ) -> color_eyre::eyre::Result<()> {
             self.0 *= 10;
@@ -373,7 +419,7 @@ mod tests {
     impl Plugin for ErrPlugin {
         fn update(
             &mut self,
-            _events: &super::EventManager,
+            _events: &mut super::EventManager,
             _plugins: &PluginStore,
         ) -> color_eyre::eyre::Result<()> {
             Err(eyre!("OH NO!"))

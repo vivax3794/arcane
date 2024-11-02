@@ -12,7 +12,7 @@ use crate::prelude::*;
 pub(super) struct SplashScreenPlugin;
 
 impl Plugin for SplashScreenPlugin {
-    fn on_load(&mut self, events: &EventManager) -> Result<()> {
+    fn on_load(&mut self, events: &mut EventManager) -> Result<()> {
         events.dispatch(WindowEvent::CreateWindow(Box::new(SplashScreenWindow)));
         Ok(())
     }
@@ -29,14 +29,15 @@ impl Window for SplashScreenWindow {
 
     fn update(
         &mut self,
-        events: &EventManager,
+        events: &mut EventManager,
         _plugins: &PluginStore,
         _focused: bool,
         id: WindowID,
     ) -> Result<()> {
-        for event in events.read::<WindowEvent>() {
+        let (reader, mut writer) = events.split();
+        for event in reader.read::<WindowEvent>() {
             if let WindowEvent::CreateWindow(_) = event {
-                events.dispatch(WindowEvent::CloseWindow(id));
+                writer.dispatch(WindowEvent::CloseWindow(id));
             }
         }
 

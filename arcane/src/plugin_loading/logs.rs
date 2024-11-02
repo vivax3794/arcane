@@ -1,6 +1,5 @@
 //! Shows logs in app
 
-use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::style::Style;
 
 use crate::prelude::*;
@@ -8,19 +7,7 @@ use crate::prelude::*;
 /// Logging plugin
 pub(super) struct LogPlugin;
 
-impl Plugin for LogPlugin {
-    fn on_load(&mut self, events: &EventManager) -> Result<()> {
-        Ok(())
-    }
-
-    fn update(&mut self, events: &EventManager, plugins: &PluginStore) -> Result<()> {
-        let Some(keybinds) = plugins.get::<KeybindPlugin>() else {
-            return Ok(());
-        };
-
-        Ok(())
-    }
-}
+impl Plugin for LogPlugin {}
 
 /// Window to display logs
 #[derive(Clone, Copy)]
