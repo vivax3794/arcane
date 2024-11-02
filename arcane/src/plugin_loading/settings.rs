@@ -7,7 +7,7 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use dyn_clone::DynClone;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Style};
-use ratatui::widgets::{Block, Borders, Clear, Gauge, Paragraph, Row, Tabs};
+use ratatui::widgets::{Paragraph, Tabs};
 
 use crate::anymap::{AnyMap, Downcast, IntoBoxed};
 use crate::prelude::*;
@@ -16,8 +16,11 @@ use crate::prelude::*;
 pub enum SettingsValue<'v> {
     /// A integer value
     Integer {
+        /// The actual value
         value: &'v mut i128,
+        /// Minimum value
         min: i128,
+        /// Maximum value
         max: i128,
     },
     /// Multiple Kinds of Values
@@ -289,8 +292,8 @@ impl Window for SettingsWindow {
                     let list = Tabs::new(possible.to_owned()).select(selected);
                     frame.render_widget(list, layout[1]);
                 }
-                _ => {
-                    frame.render_widget("TODO".on_red(), layout[1]);
+                SettingsValue::Integer { value, min, max } => {
+                    todo!()
                 }
             }
         }

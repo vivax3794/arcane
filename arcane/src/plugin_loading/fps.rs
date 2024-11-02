@@ -1,12 +1,10 @@
 //! Plugin to show application FPS
 
-use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::text::ToLine;
 use ratatui::widgets::{Block, BorderType, Clear, Sparkline};
 
-use super::keybindings::{KeyBind, KeybindPlugin, SetKeybind};
-use crate::editor::{DeltaTimeEvent, KeydownEvent};
+use crate::editor::DeltaTimeEvent;
 use crate::plugin_manager::{EventManager, Plugin, PluginStore};
 use crate::prelude::*;
 
@@ -39,7 +37,7 @@ impl FpsPlugin {
 }
 
 impl Plugin for FpsPlugin {
-    fn update(&mut self, events: &mut EventManager, plugins: &PluginStore) -> Result<()> {
+    fn update(&mut self, events: &mut EventManager, _plugins: &PluginStore) -> Result<()> {
         if !self.show_fps {
             return Ok(());
         }

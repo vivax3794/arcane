@@ -1,6 +1,5 @@
 //! The editor root
 
-use std::any::Any;
 use std::time::{Duration, Instant};
 
 use crossterm::event::KeyEvent;
@@ -10,8 +9,6 @@ use ratatui::Frame;
 use crate::plugin_loading::settings::{
     get_settings,
     PluginSettings,
-    RegisterSettings,
-    SettingsPlugin,
     SettingsValue,
     SettingsValueCommon,
 };

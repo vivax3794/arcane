@@ -343,7 +343,7 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use super::{Window, WindowEvent, WindowID, WindowPlugin};
+    use super::{Window, WindowEvent, WindowPlugin};
     use crate::plugin_manager::StateManager;
 
     #[derive(Clone)]

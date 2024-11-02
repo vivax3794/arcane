@@ -96,8 +96,12 @@ pub struct EventManager {
     write_buffer: AnyMap<dyn Clearable>,
 }
 
-pub struct EventReader<'e>(&'e AnyMap<dyn Clearable>);
+/// A seperated out reader for events
+#[derive(Debug)]
+pub struct EventReader<'e>(#[debug(skip)] &'e AnyMap<dyn Clearable>);
 impl EventReader<'_> {
+    /// Same as read method on `EventManager`
+    #[must_use]
     pub fn read<E>(&self) -> &[E]
     where
         E: 'static,
@@ -109,8 +113,11 @@ impl EventReader<'_> {
     }
 }
 
-pub struct EventWriter<'e>(&'e mut AnyMap<dyn Clearable>);
+/// A seperated out writer for events
+#[derive(Debug)]
+pub struct EventWriter<'e>(#[debug(skip)] &'e mut AnyMap<dyn Clearable>);
 impl EventWriter<'_> {
+    /// Same as write method on `EventManager`
     pub fn dispatch<E>(&mut self, event: E)
     where
         E: 'static,
@@ -137,6 +144,7 @@ impl EventManager {
     }
 
     /// Returns clones of all events in the queue
+    #[must_use]
     pub fn read<E>(&self) -> &[E]
     where
         E: 'static,
@@ -147,10 +155,13 @@ impl EventManager {
         }
     }
 
+    #[must_use]
+    /// Split the event manager into a reader and writer to allow writing events based on read
+    /// events easialy
     pub fn split(&mut self) -> (EventReader, EventWriter) {
         let reader = EventReader(&self.read_buffer);
         let writer = EventWriter(&mut self.write_buffer);
-        return (reader, writer);
+        (reader, writer)
     }
 
     /// Clear the current read buffer, then swap the buffers;
