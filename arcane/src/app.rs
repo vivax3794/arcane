@@ -31,7 +31,6 @@ impl App {
 
     /// Run the application
     #[inline(always)]
-    #[instrument(skip(self, terminal))]
     pub(crate) fn run(
         mut self,
         mut terminal: ratatui::Terminal<impl ratatui::backend::Backend>,
@@ -66,9 +65,7 @@ impl App {
         if crossterm::event::poll(self.editor.event_poll_rate())? {
             if let Event::Key(key) = crossterm::event::read()? {
                 if key.kind == KeyEventKind::Press {
-                    if let Err(err) = self.handle_key(key) {
-                        self.handle_error(err);
-                    };
+                    self.handle_key(key);
                 }
             }
         }
@@ -76,8 +73,7 @@ impl App {
     }
 
     /// Handle a single key press
-    // #[instrument(skip(self))]
-    fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
+    fn handle_key(&mut self, key: KeyEvent) {
         event!(Level::TRACE, "Handling Key {}+{}", key.modifiers, key.code);
         match key.code {
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => self.quit(),
@@ -87,11 +83,10 @@ impl App {
                         self.error_popup = None;
                     }
                 } else {
-                    self.editor.handle_key(key)?;
+                    self.editor.handle_key(key);
                 }
             }
         }
-        Ok(())
     }
 
     /// Draw the app
@@ -103,7 +98,6 @@ impl App {
     }
 
     /// Draw the error window
-    #[instrument(skip(frame, err))]
     fn draw_error(frame: &mut ratatui::Frame, err: &color_eyre::Report) {
         let err = format!("WARNING: Application might be in an invalid state\n{err:?}")
             .into_text()
@@ -124,29 +118,66 @@ impl App {
 
         let constraint = Constraint::from_percentages([10, 80, 10]);
 
-        #[allow(clippy::indexing_slicing)]
-        let vertical_area = Layout::vertical(&constraint).split(frame.area())[1];
-        #[allow(clippy::indexing_slicing)]
-        let area = Layout::horizontal(constraint).split(vertical_area)[1];
+        let vertical_area = Layout::vertical(&constraint).areas::<3>(frame.area())[1];
+        let area = Layout::horizontal(constraint).areas::<3>(vertical_area)[1];
 
         frame.render_widget(Clear, area);
         frame.render_widget(err, area);
     }
 }
 
+#[coverage(off)]
 #[cfg(test)]
 mod tests {
     use color_eyre::eyre::eyre;
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
     use ratatui::backend::TestBackend;
 
     use super::App;
 
     #[test]
-    fn test_error_drawing() {
+    fn create() {
+        let _ = App::new();
+    }
+
+    #[test]
+    fn error_drawing() {
         let mut terminal = ratatui::Terminal::new(TestBackend::new(80, 80)).unwrap();
-        let error = eyre!("Test Test Test\ntest test test\naadjiojad");
+        let error = eyre!("ERROR ERROR");
         terminal
             .draw(|frame| App::draw_error(frame, &error))
             .unwrap();
+    }
+
+    #[test]
+    fn key_quit() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent {
+            modifiers: KeyModifiers::CONTROL,
+            code: KeyCode::Char('c'),
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        });
+        assert!(app.exit_application);
+    }
+
+    #[test]
+    fn error_open() {
+        let mut app = App::new();
+        app.handle_error(eyre!("OH NO!"));
+        assert!(app.error_popup.is_some());
+    }
+
+    #[test]
+    fn error_close() {
+        let mut app = App::new();
+        app.handle_error(eyre!("OH NO!"));
+        app.handle_key(KeyEvent {
+            modifiers: KeyModifiers::NONE,
+            code: KeyCode::Enter,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        });
+        assert!(app.error_popup.is_none());
     }
 }

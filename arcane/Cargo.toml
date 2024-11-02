@@ -19,3 +19,6 @@ log = "0.4"
 directories = "5"
 derive_more = {version="1", features=["debug"]}
 dyn-clone = "1"
+
+[dev-dependencies]
+proptest = "1"

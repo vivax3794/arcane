@@ -142,6 +142,13 @@ impl WindowPlugin {
     }
 
     /// Re assign all window ids
+    ///
+    /// Warning: This messes up references from the location datas, which I am honestly fine with
+    /// because this function is super rare to trigger, and you are asking for strange stuff
+    /// honestly.
+    ///
+    /// Considering this function is only useful when you hit >255 opened windows, but have also
+    /// closed some.
     fn fill_gaps(&mut self) -> Result<()> {
         let windows = mem::take(&mut self.windows);
         let windows = windows.into_values();
@@ -159,9 +166,9 @@ impl Plugin for WindowPlugin {
     fn on_load(&mut self, events: &EventManager) -> Result<()> {
         events.dispatch(RegisterSettings(Box::new(WindowSettings {
             focus_border_type: "Double",
-            other_border_type: "Plain",
-            focus_full_border: false,
-            all_full_border: false,
+            other_border_type: "Rounded",
+            focus_full_border: true,
+            all_full_border: true,
         })));
         events.dispatch(SetKeybind {
             name: "window_focus_left",
@@ -202,22 +209,22 @@ impl Plugin for WindowPlugin {
             window.update(events, plugins, *window_id == focused_window_id, *window_id)?;
         }
 
-        let Some(keybinds) = plugins.get::<KeybindPlugin>() else {
-            return Ok(());
-        };
-        for event in events.read::<KeydownEvent>() {
-            if keybinds.matches("window_focus_left", event) {
-                self.focused = self.focused.saturating_sub(1);
-            }
-            if keybinds.matches("window_focus_rigth", event) {
-                self.focused = self.focused.saturating_add(1);
-            }
-            if keybinds.matches("close_window", event) {
-                if let Some(window_id) = self.window_order.get(self.focused) {
-                    events.dispatch(WindowEvent::CloseWindow(*window_id));
-                }
-            }
-        }
+        // let Some(keybinds) = plugins.get::<KeybindPlugin>() else {
+        //     return Ok(());
+        // };
+        // for event in events.read::<KeydownEvent>() {
+        //     if keybinds.matches("window_focus_left", event) {
+        //         self.focused = self.focused.saturating_sub(1);
+        //     }
+        //     if keybinds.matches("window_focus_rigth", event) {
+        //         self.focused = self.focused.saturating_add(1);
+        //     }
+        //     if keybinds.matches("close_window", event) {
+        //         if let Some(window_id) = self.window_order.get(self.focused) {
+        //             events.dispatch(WindowEvent::CloseWindow(*window_id));
+        //         }
+        //     }
+        // }
 
         for event in events.read::<WindowEvent>() {
             match event {
@@ -326,5 +333,153 @@ impl Plugin for WindowPlugin {
             frame.render_widget(Clear, inner_area);
             window.draw(frame, inner_area, plugins);
         }
+    }
+}
+
+#[coverage(off)]
+#[cfg(test)]
+#[allow(clippy::arithmetic_side_effects)]
+mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use super::{Window, WindowEvent, WindowID, WindowPlugin};
+    use crate::plugin_manager::StateManager;
+
+    #[derive(Clone)]
+    struct TestWindow {
+        update_calls: Rc<RefCell<u8>>,
+    }
+    impl Window for TestWindow {
+        fn name(&self) -> String {
+            String::from("Test")
+        }
+        fn update(
+            &mut self,
+            _events: &super::EventManager,
+            _plugins: &super::PluginStore,
+            _focused: bool,
+            _id: super::WindowID,
+        ) -> color_eyre::eyre::Result<()> {
+            *self.update_calls.borrow_mut() += 1;
+            Ok(())
+        }
+        fn draw(
+            &self,
+            _frame: &mut ratatui::Frame,
+            _area: ratatui::prelude::Rect,
+            _plugins: &crate::plugin_manager::PluginStore,
+        ) {
+            *self.update_calls.borrow_mut() += 1;
+        }
+    }
+
+    #[test]
+    fn delete_on_empty() {
+        let mut states = StateManager::new();
+        states.plugins.insert(WindowPlugin::new());
+        states.on_load().unwrap();
+
+        states.events.dispatch(WindowEvent::CloseWindow(0));
+        states.events.swap_buffers();
+        states.update().unwrap();
+    }
+
+    #[test]
+    fn create_window() {
+        let mut states = StateManager::new();
+        states.plugins.insert(WindowPlugin::new());
+        states.on_load().unwrap();
+
+        let update_calls = Rc::new(RefCell::new(0));
+
+        states
+            .events
+            .dispatch(WindowEvent::CreateWindow(Box::new(TestWindow {
+                update_calls: Rc::clone(&update_calls),
+            })));
+        states.events.swap_buffers();
+        states.update().unwrap();
+        states.events.swap_buffers();
+        states.update().unwrap();
+
+        assert_eq!(*update_calls.borrow(), 1);
+    }
+
+    #[test]
+    fn destroy_window() {
+        let mut states = StateManager::new();
+        states.plugins.insert(WindowPlugin::new());
+        states.on_load().unwrap();
+
+        let update_calls = Rc::new(RefCell::new(0));
+
+        states
+            .events
+            .dispatch(WindowEvent::CreateWindow(Box::new(TestWindow {
+                update_calls: Rc::clone(&update_calls),
+            })));
+        states.events.swap_buffers();
+        states.update().unwrap();
+        states.events.swap_buffers();
+        states.update().unwrap();
+
+        states.events.dispatch(WindowEvent::CloseWindow(0));
+        states.events.swap_buffers();
+        states.update().unwrap();
+        states.events.swap_buffers();
+        states.update().unwrap();
+
+        assert_eq!(*update_calls.borrow(), 2);
+    }
+
+    #[test]
+    fn inserting_over_cap() {
+        let mut states = StateManager::new();
+        states.plugins.insert(WindowPlugin::new());
+        states.on_load().unwrap();
+
+        for _ in 0..=256 {
+            states
+                .events
+                .dispatch(WindowEvent::CreateWindow(Box::new(TestWindow {
+                    update_calls: Rc::default(),
+                })));
+        }
+        states.events.swap_buffers();
+        assert!(states.update().is_err());
+    }
+
+    #[test]
+    fn overflow_id_but_with_gaps() {
+        let mut states = StateManager::new();
+        states.plugins.insert(WindowPlugin::new());
+        states.on_load().unwrap();
+
+        for _ in 0..200 {
+            states
+                .events
+                .dispatch(WindowEvent::CreateWindow(Box::new(TestWindow {
+                    update_calls: Rc::default(),
+                })));
+        }
+        states.events.swap_buffers();
+        states.update().unwrap();
+
+        for i in 0..100 {
+            states.events.dispatch(WindowEvent::CloseWindow(i));
+        }
+        states.events.swap_buffers();
+        states.update().unwrap();
+
+        for _ in 0..100 {
+            states
+                .events
+                .dispatch(WindowEvent::CreateWindow(Box::new(TestWindow {
+                    update_calls: Rc::default(),
+                })));
+        }
+        states.events.swap_buffers();
+        assert!(states.update().is_ok());
     }
 }

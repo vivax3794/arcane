@@ -9,7 +9,6 @@ use crate::prelude::*;
 use crate::project_dirs;
 
 /// Setup error panic hooks and tracing
-#[instrument]
 pub fn setup() -> Result<()> {
     color_eyre::install()?;
 

@@ -38,6 +38,7 @@
     unsafe_code
 )]
 #![feature(trait_upcasting)]
+#![feature(coverage_attribute)]
 
 mod anymap;
 mod app;

@@ -14,9 +14,12 @@ COPY_SOURCE:
 
 test:
     FROM +env
+    RUN rustup component add llvm-tools-preview
+    RUN cargo install cargo-llvm-cov
     RUN cargo install cargo-nextest
     DO +COPY_SOURCE
-    DO rust+CARGO --args="nextest run --all-features"
+    DO rust+CARGO --args="llvm-cov --html nextest --all-features" --output="llvm-cov/html/.*"
+    SAVE ARTIFACT ./target/llvm-cov/html coverage AS LOCAL ./artifacts/coverage
 
 lint:
     FROM +env

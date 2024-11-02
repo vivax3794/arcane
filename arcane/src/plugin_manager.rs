@@ -65,13 +65,13 @@ where
 }
 
 impl Downcast for dyn Clearable {
-    fn _downcast<T>(this: &Self) -> Option<&T>
+    fn downcast<T>(this: &Self) -> Option<&T>
     where
         T: 'static,
     {
         (this as &dyn Any).downcast_ref()
     }
-    fn _downcast_mut<T>(this: &mut Self) -> Option<&mut T>
+    fn downcast_mut<T>(this: &mut Self) -> Option<&mut T>
     where
         T: 'static,
     {
@@ -154,13 +154,13 @@ impl<P: Plugin> PluginWrapper for RefCell<P> {
 }
 
 impl Downcast for dyn PluginWrapper {
-    fn _downcast<T>(this: &Self) -> Option<&T>
+    fn downcast<T>(this: &Self) -> Option<&T>
     where
         T: 'static,
     {
         (this as &dyn Any).downcast_ref()
     }
-    fn _downcast_mut<T>(this: &mut Self) -> Option<&mut T>
+    fn downcast_mut<T>(this: &mut Self) -> Option<&mut T>
     where
         T: 'static,
     {
@@ -265,5 +265,165 @@ impl StateManager {
             plugin.borrow_mut().on_load(&self.events)?;
         }
         Ok(())
+    }
+}
+
+#[coverage(off)]
+#[cfg(test)]
+#[allow(clippy::arithmetic_side_effects)]
+mod tests {
+    use color_eyre::eyre::eyre;
+
+    use super::{Plugin, StateManager};
+    use crate::PluginStore;
+
+    mod events {
+        use crate::EventManager;
+
+        #[test]
+        fn read_empty() {
+            let events = EventManager::new();
+            assert_eq!(events.read::<i32>(), []);
+        }
+
+        #[test]
+        fn simple() {
+            let mut events = EventManager::new();
+            events.dispatch(10_i32);
+            events.dispatch(20_i32);
+            events.swap_buffers();
+
+            assert_eq!(events.read::<i32>(), [10, 20]);
+        }
+
+        #[test]
+        fn does_not_consume() {
+            let mut events = EventManager::new();
+            events.dispatch(10_i32);
+            events.dispatch(20_i32);
+            events.swap_buffers();
+
+            assert_eq!(events.read::<i32>(), [10, 20]);
+            assert_eq!(events.read::<i32>(), [10, 20]);
+            assert_eq!(events.read::<i32>(), [10, 20]);
+            assert_eq!(events.read::<i32>(), [10, 20]);
+        }
+
+        #[test]
+        fn multiple_types() {
+            let mut events = EventManager::new();
+            events.dispatch(10_i32);
+            events.dispatch(20_i8);
+            events.swap_buffers();
+
+            assert_eq!(events.read::<i32>(), [10]);
+            assert_eq!(events.read::<i8>(), [20]);
+        }
+
+        #[test]
+        fn need_to_swap() {
+            let events = EventManager::new();
+            events.dispatch(10_i32);
+            events.dispatch(20_i32);
+
+            assert_eq!(events.read::<i32>(), []);
+        }
+
+        #[test]
+        fn swap_clears() {
+            let mut events = EventManager::new();
+            events.dispatch(10_i32);
+            events.dispatch(20_i32);
+            events.swap_buffers();
+            events.dispatch(30_i32);
+            events.swap_buffers();
+
+            assert_eq!(events.read::<i32>(), [30]);
+        }
+
+        #[test]
+        fn dispatch_goes_to_write_buffer() {
+            let mut events = EventManager::new();
+            events.dispatch(10_i32);
+            events.dispatch(20_i32);
+            events.swap_buffers();
+            events.dispatch(30_i32);
+
+            assert_eq!(events.read::<i32>(), [10, 20]);
+        }
+    }
+
+    #[derive(PartialEq, Eq, Debug, Clone, Copy)]
+    struct TestPlugin(u8);
+
+    impl Plugin for TestPlugin {
+        fn update(
+            &mut self,
+            _events: &super::EventManager,
+            _plugins: &PluginStore,
+        ) -> color_eyre::eyre::Result<()> {
+            self.0 *= 10;
+            Ok(())
+        }
+    }
+
+    #[derive(PartialEq, Eq, Debug, Clone, Copy)]
+    struct ErrPlugin;
+
+    impl Plugin for ErrPlugin {
+        fn update(
+            &mut self,
+            _events: &super::EventManager,
+            _plugins: &PluginStore,
+        ) -> color_eyre::eyre::Result<()> {
+            Err(eyre!("OH NO!"))
+        }
+    }
+
+    #[test]
+    fn update() {
+        let mut state = StateManager::new();
+        state.plugins.insert(TestPlugin(10));
+        state.update().unwrap();
+
+        assert_eq!(
+            state.plugins.get::<TestPlugin>().map(|x| *x),
+            Some(TestPlugin(100))
+        );
+    }
+
+    #[test]
+    fn update_error() {
+        let mut state = StateManager::new();
+        state.plugins.insert(TestPlugin(10));
+        state.plugins.insert(ErrPlugin);
+
+        assert!(state.update().is_err());
+    }
+
+    #[test]
+    fn get_ref() {
+        let mut plugins = PluginStore::new();
+        plugins.insert(TestPlugin(10));
+
+        assert_eq!(
+            plugins.get::<TestPlugin>().map(|x| *x),
+            Some(TestPlugin(10))
+        );
+    }
+
+    #[test]
+    fn get_mut() {
+        let mut plugins = PluginStore::new();
+        plugins.insert(TestPlugin(10));
+
+        if let Some(mut value) = plugins.get_mut::<TestPlugin>() {
+            value.0 += 10;
+        }
+
+        assert_eq!(
+            plugins.get::<TestPlugin>().map(|x| *x),
+            Some(TestPlugin(20))
+        );
     }
 }

@@ -1,9 +1,10 @@
 //! Handles abstracting actions into keybindings
 
-use std::any::TypeId;
 use std::collections::HashMap;
 
 use crossterm::event::{KeyCode, KeyModifiers};
+use ratatui::layout::Constraint;
+use ratatui::widgets::{Row, Table};
 
 use crate::editor::KeydownEvent;
 use crate::plugin_manager::Plugin;
@@ -143,5 +144,15 @@ impl Window for KeybindWindow {
         area: ratatui::prelude::Rect,
         plugins: &crate::plugin_manager::PluginStore,
     ) {
+        let Some(keybinds) = plugins.get::<KeybindPlugin>() else {
+            return;
+        };
+
+        let rows = keybinds
+            .bindings
+            .iter()
+            .map(|(key, value)| Row::new([(*key).to_owned(), value.render()]));
+        let table = Table::new(rows, [Constraint::Fill(1), Constraint::Fill(1)]);
+        frame.render_widget(table, area);
     }
 }

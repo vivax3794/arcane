@@ -43,13 +43,13 @@ pub trait PluginSettings: Any + DynClone {
 }
 
 impl Downcast for dyn PluginSettings {
-    fn _downcast<T>(this: &Self) -> Option<&T>
+    fn downcast<T>(this: &Self) -> Option<&T>
     where
         T: 'static,
     {
         (this as &dyn Any).downcast_ref()
     }
-    fn _downcast_mut<T>(this: &mut Self) -> Option<&mut T>
+    fn downcast_mut<T>(this: &mut Self) -> Option<&mut T>
     where
         T: 'static,
     {
