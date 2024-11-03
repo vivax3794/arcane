@@ -9,6 +9,7 @@ use ratatui::Frame;
 use crate::plugin_loading::settings::{
     get_settings,
     PluginSettings,
+    RegisterSettings,
     SettingsValue,
     SettingsValueCommon,
 };
@@ -29,7 +30,7 @@ pub struct KeydownEvent(pub KeyEvent);
 #[derive(Clone, Copy)]
 struct EditorSettings {
     /// How long should the program wait on events before rendering the next frame
-    event_polling_rate: i128,
+    event_polling_rate: i32,
 }
 
 impl PluginSettings for EditorSettings {
@@ -42,7 +43,8 @@ impl PluginSettings for EditorSettings {
             value: SettingsValue::Integer {
                 value: &mut self.event_polling_rate,
                 min: 0,
-                max: 10,
+                max: 100,
+                step: 10,
             },
         }])
     }
@@ -69,11 +71,11 @@ impl Editor {
     pub(crate) fn on_load(&mut self) -> Result<()> {
         crate::plugin_loading::load_plugins(&mut self.state.plugins);
         self.state.on_load()?;
-        // self.plugins
-        //     .events
-        //     .dispatch(RegisterSettings(Box::new(EditorSettings {
-        //         event_polling_rate: 1,
-        //     })));
+        self.state
+            .events
+            .dispatch(RegisterSettings(Box::new(EditorSettings {
+                event_polling_rate: 1,
+            })));
         Ok(())
     }
 

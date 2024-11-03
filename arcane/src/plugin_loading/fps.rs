@@ -31,7 +31,7 @@ impl FpsPlugin {
             fps_history: Vec::new(),
             last_delta: 0.0,
             last_recording: 0.0,
-            show_fps: false,
+            show_fps: true,
         }
     }
 }
@@ -78,7 +78,7 @@ impl Plugin for FpsPlugin {
         }
 
         let area =
-            Layout::vertical([Constraint::Length(5), Constraint::Fill(1)]).areas::<2>(area)[0];
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(5)]).areas::<2>(area)[1];
         let area =
             Layout::horizontal([Constraint::Fill(1), Constraint::Length(20)]).areas::<2>(area)[1];
 

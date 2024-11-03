@@ -7,9 +7,11 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use dyn_clone::DynClone;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Style};
-use ratatui::widgets::{Paragraph, Tabs};
+use ratatui::text::Text;
+use ratatui::widgets::{Gauge, Paragraph, Tabs};
 
-use crate::anymap::{AnyMap, Downcast, IntoBoxed};
+use super::keybindings::MenuEvent;
+use crate::anymap::{self, AnyMap};
 use crate::prelude::*;
 
 /// The value in enum
@@ -17,14 +19,16 @@ pub enum SettingsValue<'v> {
     /// A integer value
     Integer {
         /// The actual value
-        value: &'v mut i128,
+        value: &'v mut i32,
         /// Minimum value
-        min: i128,
+        min: i32,
         /// Maximum value
-        max: i128,
+        max: i32,
+        /// Step
+        step: i32,
     },
     /// Multiple Kinds of Values
-    DropDown(&'v mut &'static str, &'static [&'static str]),
+    Selection(&'v mut &'static str, &'static [&'static str]),
     /// A toogle
     Toogle(&'v mut bool),
 }
@@ -37,6 +41,50 @@ pub struct SettingsValueCommon<'v> {
     pub value: SettingsValue<'v>,
 }
 
+impl SettingsValueCommon<'_> {
+    fn handle_settings_update(self, alt_mode: bool) {
+        match self.value {
+            SettingsValue::Toogle(value) => {
+                *value = !*value;
+            }
+            SettingsValue::Selection(value, possible) => {
+                let selected = possible
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, p)| (p == value).then_some(index))
+                    .unwrap_or_default();
+
+                let selected = if alt_mode {
+                    selected
+                        .checked_sub(1)
+                        .unwrap_or(possible.len().saturating_sub(1))
+                } else {
+                    selected
+                        .saturating_add(1)
+                        .checked_rem(possible.len())
+                        .unwrap_or_default()
+                };
+
+                if let Some(new) = possible.get(selected) {
+                    *value = new;
+                }
+            }
+            SettingsValue::Integer {
+                value,
+                min,
+                max,
+                step,
+            } => {
+                if alt_mode {
+                    *value = value.saturating_sub(step).min(max).max(min);
+                } else {
+                    *value = value.saturating_add(step).min(max).max(min);
+                }
+            }
+        }
+    }
+}
+
 /// Settings for a specific plugin
 pub trait PluginSettings: Any + DynClone {
     /// Used for serializing and loading settings.
@@ -45,7 +93,7 @@ pub trait PluginSettings: Any + DynClone {
     fn values(&mut self) -> Box<[SettingsValueCommon]>;
 }
 
-impl Downcast for dyn PluginSettings {
+impl anymap::Downcast for dyn PluginSettings {
     fn downcast<T>(this: &Self) -> Option<&T>
     where
         T: 'static,
@@ -60,7 +108,7 @@ impl Downcast for dyn PluginSettings {
     }
 }
 
-impl<P: PluginSettings> IntoBoxed<dyn PluginSettings> for P {
+impl<P: PluginSettings> anymap::IntoBoxed<dyn PluginSettings> for P {
     fn into(self) -> Box<dyn PluginSettings> {
         Box::new(self)
     }
@@ -103,33 +151,37 @@ pub fn get_settings<S: PluginSettings>(store: &PluginStore) -> Option<Ref<S>> {
     settings.ok()
 }
 
+#[derive(Clone)]
+struct OpenSettings;
+
 impl Plugin for SettingsPlugin {
     fn on_load(&mut self, events: &mut EventManager) -> Result<()> {
-        events.dispatch(SetKeybind {
-            name: "open_settings",
-            bind: KeyBind {
-                modifers: KeyModifiers::CONTROL,
-                key: KeyCode::Char('p'),
-            },
-        });
+        events.ensure_event::<OpenSettings>();
+        events.dispatch(SetKeybind::chord(
+            [
+                KeyBind {
+                    modifiers: KeyModifiers::CONTROL,
+                    key: KeyCode::Char('p'),
+                },
+                KeyBind {
+                    modifiers: KeyModifiers::CONTROL,
+                    key: KeyCode::Char('p'),
+                },
+            ],
+            OpenSettings,
+        ));
         Ok(())
     }
 
-    fn update(&mut self, events: &mut EventManager, plugins: &PluginStore) -> Result<()> {
+    fn update(&mut self, events: &mut EventManager, _plugins: &PluginStore) -> Result<()> {
         for event in events.read::<RegisterSettings>() {
             let settings = dyn_clone::clone_box(&*event.0);
             self.settings.insert_raw(settings);
         }
 
-        let Some(keybinds) = plugins.get::<KeybindPlugin>() else {
-            return Ok(());
-        };
-
         let (reader, mut writer) = events.split();
-        for event in reader.read::<KeydownEvent>() {
-            if keybinds.matches("open_settings", event) {
-                writer.dispatch(WindowEvent::CreateWindow(Box::new(SettingsWindow::new())));
-            }
+        for _ in reader.read::<OpenSettings>() {
+            writer.dispatch(WindowEvent::CreateWindow(Box::new(SettingsWindow::new())));
         }
 
         Ok(())
@@ -177,54 +229,36 @@ impl Window for SettingsWindow {
             return Ok(());
         };
 
-        let Some(keybinds) = plugins.get::<KeybindPlugin>() else {
-            return Ok(());
-        };
-        for event in events.read::<KeydownEvent>() {
-            if keybinds.matches("menu_left", event) {
-                self.selected_tab = self.selected_tab.saturating_sub(1);
-                self.selected_row = 0;
-            } else if keybinds.matches("menu_right", event) {
-                self.selected_tab = self
-                    .selected_tab
-                    .saturating_add(1)
-                    .min(settings.settings.len().saturating_sub(1));
-                self.selected_row = 0;
-            } else if keybinds.matches("menu_up", event) {
-                self.selected_row = self.selected_row.saturating_sub(1);
-            } else if keybinds.matches("menu_down", event) {
-                self.selected_row = self.selected_row.saturating_add(1);
-            } else if keybinds.matches("menu_select", event) {
-                let settings = settings.sorted_settings();
-                let Some(select_setting) = settings.into_iter().nth(self.selected_tab) else {
-                    return Ok(());
-                };
+        for event in events.read::<MenuEvent>() {
+            match event {
+                MenuEvent::Left => {
+                    self.selected_tab = self.selected_tab.saturating_sub(1);
+                    self.selected_row = 0;
+                }
+                MenuEvent::Right => {
+                    self.selected_tab = self
+                        .selected_tab
+                        .saturating_add(1)
+                        .min(settings.settings.len().saturating_sub(1));
+                    self.selected_row = 0;
+                }
+                MenuEvent::Up => {
+                    self.selected_row = self.selected_row.saturating_sub(1);
+                }
+                MenuEvent::Down => {
+                    self.selected_row = self.selected_row.saturating_add(1);
+                }
+                MenuEvent::Select | MenuEvent::AltSelect => {
+                    let settings = settings.sorted_settings();
+                    let Some(select_setting) = settings.into_iter().nth(self.selected_tab) else {
+                        return Ok(());
+                    };
 
-                let values = select_setting.values();
-                let Some(value) = IntoIterator::into_iter(values).nth(self.selected_row) else {
-                    return Ok(());
-                };
-
-                match value.value {
-                    SettingsValue::Toogle(value) => {
-                        *value = !*value;
-                    }
-                    SettingsValue::DropDown(value, possible) => {
-                        let selected = possible
-                            .iter()
-                            .enumerate()
-                            .find_map(|(index, p)| (p == value).then_some(index))
-                            .unwrap_or_default();
-
-                        let selected = selected
-                            .saturating_add(1)
-                            .checked_rem(possible.len())
-                            .unwrap_or_default();
-                        if let Some(new) = possible.get(selected) {
-                            *value = new;
-                        }
-                    }
-                    _ => todo!("This setting kind isnt implemented yet"),
+                    let values = select_setting.values();
+                    let Some(value) = IntoIterator::into_iter(values).nth(self.selected_row) else {
+                        return Ok(());
+                    };
+                    value.handle_settings_update(event == &MenuEvent::AltSelect);
                 }
             }
         }
@@ -282,7 +316,7 @@ impl Window for SettingsWindow {
                     let text = if *value { text.green() } else { text.red() };
                     frame.render_widget(text, layout[1]);
                 }
-                SettingsValue::DropDown(selected, possible) => {
+                SettingsValue::Selection(selected, possible) => {
                     let selected = possible
                         .iter()
                         .enumerate()
@@ -292,10 +326,206 @@ impl Window for SettingsWindow {
                     let list = Tabs::new(possible.to_owned()).select(selected);
                     frame.render_widget(list, layout[1]);
                 }
-                SettingsValue::Integer { value, min, max } => {
-                    todo!()
+                SettingsValue::Integer {
+                    value, min, max, ..
+                } => {
+                    let norm_value: f64 = value.saturating_sub(min).into();
+                    let norm_max: f64 = max.saturating_sub(min).into();
+
+                    let bar = Gauge::default()
+                        .ratio(norm_value / norm_max)
+                        .label(value.to_string());
+                    frame.render_widget(bar, layout[1]);
                 }
             }
         }
+    }
+}
+
+#[coverage(off)]
+#[cfg(test)]
+mod tests {
+    use super::{SettingsValue, SettingsValueCommon};
+
+    #[test]
+    fn select_one() {
+        let mut value = "1";
+        let settings_value = SettingsValueCommon {
+            name: "test",
+            value: SettingsValue::Selection(&mut value, &["1", "2"]),
+        };
+        settings_value.handle_settings_update(false);
+
+        assert_eq!(value, "2");
+    }
+
+    #[test]
+    fn select_one_alt() {
+        let mut value = "2";
+        let settings_value = SettingsValueCommon {
+            name: "test",
+            value: SettingsValue::Selection(&mut value, &["1", "2", "3"]),
+        };
+        settings_value.handle_settings_update(true);
+
+        assert_eq!(value, "1");
+    }
+
+    #[test]
+    fn select_overflow() {
+        let mut value = "1";
+
+        let settings_value = SettingsValueCommon {
+            name: "test",
+            value: SettingsValue::Selection(&mut value, &["1", "2"]),
+        };
+        settings_value.handle_settings_update(false);
+
+        let settings_value = SettingsValueCommon {
+            name: "test",
+            value: SettingsValue::Selection(&mut value, &["1", "2"]),
+        };
+        settings_value.handle_settings_update(false);
+
+        assert_eq!(value, "1");
+    }
+
+    #[test]
+    fn select_overflow_alt() {
+        let mut value = "1";
+        let settings_value = SettingsValueCommon {
+            name: "test",
+            value: SettingsValue::Selection(&mut value, &["1", "2", "3"]),
+        };
+        settings_value.handle_settings_update(true);
+
+        assert_eq!(value, "3");
+    }
+
+    #[test]
+    fn select_invalid() {
+        let mut value = "invalid";
+
+        let settings_value = SettingsValueCommon {
+            name: "test",
+            value: SettingsValue::Selection(&mut value, &["1", "2"]),
+        };
+        settings_value.handle_settings_update(false);
+    }
+
+    #[test]
+    fn toggle_true() {
+        let mut value = false;
+
+        let settings_value = SettingsValueCommon {
+            name: "test",
+            value: SettingsValue::Toogle(&mut value),
+        };
+        settings_value.handle_settings_update(false);
+
+        assert!(value);
+    }
+
+    #[test]
+    fn toggle_false() {
+        let mut value = true;
+
+        let settings_value = SettingsValueCommon {
+            name: "test",
+            value: SettingsValue::Toogle(&mut value),
+        };
+        settings_value.handle_settings_update(false);
+
+        assert!(!value);
+    }
+
+    #[test]
+    fn integer() {
+        let mut value = 0;
+
+        let settings_value = SettingsValueCommon {
+            name: "test",
+            value: SettingsValue::Integer {
+                value: &mut value,
+                min: 0,
+                max: 10,
+                step: 1,
+            },
+        };
+        settings_value.handle_settings_update(false);
+
+        assert_eq!(value, 1);
+    }
+
+    #[test]
+    fn integer_step() {
+        let mut value = 0;
+
+        let settings_value = SettingsValueCommon {
+            name: "test",
+            value: SettingsValue::Integer {
+                value: &mut value,
+                min: 0,
+                max: 10,
+                step: 5,
+            },
+        };
+        settings_value.handle_settings_update(false);
+
+        assert_eq!(value, 5);
+    }
+
+    #[test]
+    fn integer_max() {
+        let mut value = 0;
+
+        let settings_value = SettingsValueCommon {
+            name: "test",
+            value: SettingsValue::Integer {
+                value: &mut value,
+                min: 0,
+                max: 10,
+                step: 20,
+            },
+        };
+        settings_value.handle_settings_update(false);
+
+        assert_eq!(value, 10);
+    }
+
+    #[test]
+    fn integer_alt() {
+        let mut value = 5;
+
+        let settings_value = SettingsValueCommon {
+            name: "test",
+            value: SettingsValue::Integer {
+                value: &mut value,
+                min: 0,
+                max: 10,
+                step: 1,
+            },
+        };
+        settings_value.handle_settings_update(true);
+
+        assert_eq!(value, 4);
+    }
+
+    #[test]
+    fn integer_min() {
+        let mut value = 5;
+
+        let settings_value = SettingsValueCommon {
+            name: "test",
+            value: SettingsValue::Integer {
+                value: &mut value,
+                min: 0,
+                max: 10,
+                step: 20,
+            },
+        };
+        settings_value.handle_settings_update(true);
+
+        assert_eq!(value, 0);
     }
 }

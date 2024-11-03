@@ -83,6 +83,16 @@ where
         Some(A::downcast(any).expect("AnyMap corrupted"))
     }
 
+    /// Get a mutable reference to a entry based on a type id
+    ///
+    /// # Safety
+    /// - **Do not** use this mutable reference to change the concrete type of the value.
+    /// - **Only** modify attributes or call methods on the inner type `A`.
+    /// - Changing the concrete type will lead to panics and undefined behavior.
+    pub(crate) fn get_mut_raw(&mut self, id: &TypeId) -> Option<&mut Box<A>> {
+        self.0.get_mut(id)
+    }
+
     /// Get a entry from the map for in place operations
     pub(crate) fn entry<T: IntoBoxed<A> + 'static>(&mut self) -> Entry<A, T> {
         let entry = self.0.entry(TypeId::of::<T>());
@@ -271,7 +281,7 @@ mod tests {
     }
 
     mod non_any {
-        use std::any::Any;
+        use std::any::{Any, TypeId};
 
         use crate::anymap::{AnyMap, Downcast, IntoBoxed};
 
@@ -348,6 +358,20 @@ mod tests {
 
             assert_eq!(map.get(), Some(&TestStruct1(20)));
             assert_eq!(map.get(), Some(&TestStruct2(15)));
+        }
+
+        #[test]
+        fn get_raw() {
+            let mut map = AnyMap::<dyn TestTrait>::new();
+            map.insert(TestStruct1(10));
+            map.insert(TestStruct2(10));
+
+            map.get_mut_raw(&TypeId::of::<TestStruct1>())
+                .unwrap()
+                .mut_method();
+
+            assert_eq!(map.get(), Some(&TestStruct1(20)));
+            assert_eq!(map.get(), Some(&TestStruct2(10)));
         }
     }
 }

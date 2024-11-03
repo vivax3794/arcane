@@ -19,6 +19,8 @@ log = "0.4"
 directories = "5"
 derive_more = {version="1", features=["debug"]}
 dyn-clone = "1"
+trie-rs = "0.4"
+ouroboros = "0.18"
 
 [dev-dependencies]
 proptest = "1"

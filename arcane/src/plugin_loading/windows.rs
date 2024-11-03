@@ -91,14 +91,14 @@ impl PluginSettings for WindowSettings {
         let mut options = vec![
             SettingsValueCommon {
                 name: "focus_border_type",
-                value: SettingsValue::DropDown(
+                value: SettingsValue::Selection(
                     &mut self.focus_border_type,
                     &["Double", "Rounded", "Plain"],
                 ),
             },
             SettingsValueCommon {
                 name: "other_border_type",
-                value: SettingsValue::DropDown(
+                value: SettingsValue::Selection(
                     &mut self.other_border_type,
                     &["Double", "Rounded", "Plain"],
                 ),
@@ -162,6 +162,13 @@ impl WindowPlugin {
     }
 }
 
+#[derive(Clone)]
+enum WindowUiEvent {
+    FocusLeft,
+    FocusRight,
+    DeleteFocus,
+}
+
 impl Plugin for WindowPlugin {
     fn on_load(&mut self, events: &mut EventManager) -> Result<()> {
         events.dispatch(RegisterSettings(Box::new(WindowSettings {
@@ -170,27 +177,43 @@ impl Plugin for WindowPlugin {
             focus_full_border: true,
             all_full_border: true,
         })));
-        events.dispatch(SetKeybind {
-            name: "window_focus_left",
-            bind: KeyBind {
-                modifers: KeyModifiers::CONTROL,
+
+        events.ensure_event::<WindowUiEvent>();
+        events.dispatch(SetKeybind::single_key(
+            KeyBind {
+                modifiers: KeyModifiers::CONTROL,
                 key: KeyCode::Char('h'),
             },
-        });
-        events.dispatch(SetKeybind {
-            name: "window_focus_rigth",
-            bind: KeyBind {
-                modifers: KeyModifiers::CONTROL,
+            WindowUiEvent::FocusLeft,
+        ));
+        events.dispatch(SetKeybind::single_key(
+            KeyBind {
+                modifiers: KeyModifiers::CONTROL,
+                key: KeyCode::Left,
+            },
+            WindowUiEvent::FocusLeft,
+        ));
+        events.dispatch(SetKeybind::single_key(
+            KeyBind {
+                modifiers: KeyModifiers::CONTROL,
                 key: KeyCode::Char('l'),
             },
-        });
-        events.dispatch(SetKeybind {
-            name: "close_window",
-            bind: KeyBind {
-                modifers: KeyModifiers::CONTROL,
+            WindowUiEvent::FocusRight,
+        ));
+        events.dispatch(SetKeybind::single_key(
+            KeyBind {
+                modifiers: KeyModifiers::CONTROL,
+                key: KeyCode::Right,
+            },
+            WindowUiEvent::FocusRight,
+        ));
+        events.dispatch(SetKeybind::single_key(
+            KeyBind {
+                modifiers: KeyModifiers::CONTROL,
                 key: KeyCode::Char('w'),
             },
-        });
+            WindowUiEvent::DeleteFocus,
+        ));
 
         Ok(())
     }
@@ -209,22 +232,22 @@ impl Plugin for WindowPlugin {
             window.update(events, plugins, *window_id == focused_window_id, *window_id)?;
         }
 
-        // let Some(keybinds) = plugins.get::<KeybindPlugin>() else {
-        //     return Ok(());
-        // };
-        // for event in events.read::<KeydownEvent>() {
-        //     if keybinds.matches("window_focus_left", event) {
-        //         self.focused = self.focused.saturating_sub(1);
-        //     }
-        //     if keybinds.matches("window_focus_rigth", event) {
-        //         self.focused = self.focused.saturating_add(1);
-        //     }
-        //     if keybinds.matches("close_window", event) {
-        //         if let Some(window_id) = self.window_order.get(self.focused) {
-        //             events.dispatch(WindowEvent::CloseWindow(*window_id));
-        //         }
-        //     }
-        // }
+        let (reader, mut writer) = events.split();
+        for event in reader.read::<WindowUiEvent>() {
+            match event {
+                WindowUiEvent::FocusLeft => {
+                    self.focused = self.focused.saturating_sub(1);
+                }
+                WindowUiEvent::FocusRight => {
+                    self.focused = self.focused.saturating_add(1);
+                }
+                WindowUiEvent::DeleteFocus => {
+                    if let Some(window_id) = self.window_order.get(self.focused) {
+                        writer.dispatch(WindowEvent::CloseWindow(*window_id));
+                    }
+                }
+            }
+        }
 
         for event in events.read::<WindowEvent>() {
             match event {
@@ -338,7 +361,7 @@ impl Plugin for WindowPlugin {
 
 #[coverage(off)]
 #[cfg(test)]
-#[allow(clippy::arithmetic_side_effects)]
+#[allow(clippy::arithmetic_side_effects, clippy::disallowed_methods)]
 mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;

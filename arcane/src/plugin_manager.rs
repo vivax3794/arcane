@@ -1,6 +1,6 @@
 //! Plugin management and creation types
 
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::cell::{Ref, RefCell, RefMut};
 
 use derive_more::Debug;
@@ -50,21 +50,28 @@ pub trait Plugin: Any {
 /// Also contains wrapper methods to allow downcasting.
 /// Used to allow to type safely clear out all queues in the event manager without clearing the
 /// hashmap itself.
-trait Clearable: Any {
+trait DynVec: Any {
     /// Clear the container
     fn clear(&mut self);
+    fn push(&mut self, element: Box<dyn Any>);
 }
 
-impl<E> Clearable for Vec<E>
+impl<E> DynVec for Vec<E>
 where
     E: 'static,
 {
     fn clear(&mut self) {
         Vec::clear(self);
     }
+
+    fn push(&mut self, element: Box<dyn Any>) {
+        if let Ok(element) = element.downcast() {
+            self.push(*element)
+        }
+    }
 }
 
-impl Downcast for dyn Clearable {
+impl Downcast for dyn DynVec {
     fn downcast<T>(this: &Self) -> Option<&T>
     where
         T: 'static,
@@ -79,9 +86,18 @@ impl Downcast for dyn Clearable {
     }
 }
 
-impl<T: Clearable> IntoBoxed<dyn Clearable> for T {
-    fn into(self) -> Box<dyn Clearable> {
+impl<T: DynVec> IntoBoxed<dyn DynVec> for T {
+    fn into(self) -> Box<dyn DynVec> {
         Box::new(self)
+    }
+}
+
+pub trait RawEvent: Any {
+    fn vec_type_id(&self) -> TypeId;
+}
+impl<T: Any> RawEvent for T {
+    fn vec_type_id(&self) -> TypeId {
+        TypeId::of::<Vec<Self>>()
     }
 }
 
@@ -90,15 +106,15 @@ impl<T: Clearable> IntoBoxed<dyn Clearable> for T {
 pub struct EventManager {
     /// The buffer events are currently being read from
     #[debug(skip)]
-    read_buffer: AnyMap<dyn Clearable>,
+    read_buffer: AnyMap<dyn DynVec>,
     /// The buffer new events will be written to
     #[debug(skip)]
-    write_buffer: AnyMap<dyn Clearable>,
+    write_buffer: AnyMap<dyn DynVec>,
 }
 
 /// A seperated out reader for events
 #[derive(Debug)]
-pub struct EventReader<'e>(#[debug(skip)] &'e AnyMap<dyn Clearable>);
+pub struct EventReader<'e>(#[debug(skip)] &'e AnyMap<dyn DynVec>);
 impl EventReader<'_> {
     /// Same as read method on `EventManager`
     #[must_use]
@@ -115,7 +131,7 @@ impl EventReader<'_> {
 
 /// A seperated out writer for events
 #[derive(Debug)]
-pub struct EventWriter<'e>(#[debug(skip)] &'e mut AnyMap<dyn Clearable>);
+pub struct EventWriter<'e>(#[debug(skip)] &'e mut AnyMap<dyn DynVec>);
 impl EventWriter<'_> {
     /// Same as write method on `EventManager`
     pub fn dispatch<E>(&mut self, event: E)
@@ -123,6 +139,16 @@ impl EventWriter<'_> {
         E: 'static,
     {
         self.0.entry::<Vec<E>>().or_default().push(event);
+    }
+
+    /// Insert a `dyn Any` into its corresponding queue.
+    /// `ensure_event` should have been called beforehand to ensure there is a queue to push into.
+    pub fn dispatch_raw(&mut self, event: Box<dyn RawEvent>) {
+        if let Some(events) = self.0.get_mut_raw(&(*event).vec_type_id()) {
+            events.push(event);
+        } else {
+            event!(Level::WARN, "Tried to insert raw to unknown event type (can not create default queue for unknown types)");
+        }
     }
 }
 
@@ -164,6 +190,25 @@ impl EventManager {
         (reader, writer)
     }
 
+    /// Make sure a queue exsists for the specified type
+    pub fn ensure_event<E>(&mut self)
+    where
+        E: 'static,
+    {
+        self.write_buffer.entry::<Vec<E>>().or_default();
+        self.read_buffer.entry::<Vec<E>>().or_default();
+    }
+
+    /// Insert a `dyn Any` into its corresponding queue.
+    /// `ensure_event` should have been called beforehand to ensure there is a queue to push into.
+    pub fn dispatch_raw(&mut self, event: Box<dyn RawEvent>) {
+        if let Some(events) = self.write_buffer.get_mut_raw(&(*event).vec_type_id()) {
+            events.push(event);
+        } else {
+            event!(Level::WARN, "Tried to insert raw to unknown event type (can not create default queue for unknown types)");
+        }
+    }
+
     /// Clear the current read buffer, then swap the buffers;
     pub(crate) fn swap_buffers(&mut self) {
         for queue in self.read_buffer.iter_mut() {
@@ -178,17 +223,21 @@ impl EventManager {
 /// Used to enforce stronger trait guaranties on plugin store
 trait PluginWrapper: Any {
     /// Borrow immutable
-    fn borrow(&self) -> Ref<dyn Plugin>;
+    fn borrow(&self) -> Option<Ref<dyn Plugin>>;
     /// Borrow mut
-    fn borrow_mut(&self) -> RefMut<dyn Plugin>;
+    fn borrow_mut(&self) -> Option<RefMut<dyn Plugin>>;
 }
 
 impl<P: Plugin> PluginWrapper for RefCell<P> {
-    fn borrow(&self) -> Ref<dyn Plugin> {
-        RefCell::borrow(self)
+    fn borrow(&self) -> Option<Ref<dyn Plugin>> {
+        RefCell::try_borrow(self)
+            .ok()
+            .map(|p| Ref::map(p, |p| p as &dyn Plugin))
     }
-    fn borrow_mut(&self) -> RefMut<dyn Plugin> {
-        RefCell::borrow_mut(self)
+    fn borrow_mut(&self) -> Option<RefMut<dyn Plugin>> {
+        RefCell::try_borrow_mut(self)
+            .ok()
+            .map(|p| RefMut::map(p, |p| p as &mut dyn Plugin))
     }
 }
 
@@ -237,7 +286,7 @@ impl PluginStore {
     pub fn get<P: Plugin + 'static>(&self) -> Option<Ref<P>> {
         self.plugins
             .get::<RefCell<P>>()
-            .map(|plugin| plugin.borrow())
+            .and_then(|plugin| plugin.try_borrow().ok())
     }
 
     /// Get a mutable reference to a plugin.
@@ -248,7 +297,7 @@ impl PluginStore {
     pub fn get_mut<P: Plugin + 'static>(&self) -> Option<RefMut<P>> {
         self.plugins
             .get::<RefCell<P>>()
-            .map(|plugin| plugin.borrow_mut())
+            .and_then(|plugin| plugin.try_borrow_mut().ok())
     }
 
     /// Insert a plugin into the map
@@ -258,7 +307,7 @@ impl PluginStore {
 
     /// Iterate over immutable references to the plugins
     pub fn iter(&self) -> impl Iterator<Item = Ref<dyn Plugin>> {
-        self.plugins.iter().map(|plugin| plugin.borrow())
+        self.plugins.iter().filter_map(|plugin| plugin.borrow())
     }
 }
 
@@ -283,9 +332,9 @@ impl StateManager {
     /// Call the handle event method of every plugin
     pub(crate) fn update(&mut self) -> Result<()> {
         for plugin in self.plugins.plugins.iter() {
-            plugin
-                .borrow_mut()
-                .update(&mut self.events, &self.plugins)?;
+            if let Some(mut plugin) = plugin.borrow_mut() {
+                plugin.update(&mut self.events, &self.plugins)?;
+            }
         }
         Ok(())
     }
@@ -293,9 +342,11 @@ impl StateManager {
     /// Call the draw method of every plugin
     pub(crate) fn draw(&self, frame: &mut ratatui::Frame, area: ratatui::prelude::Rect) {
         let mut plugins = self.plugins.plugins.iter().collect::<Vec<_>>();
-        plugins.sort_by_key(|plugin| plugin.borrow().z_index());
+        plugins.sort_by_key(|plugin| plugin.borrow().map(|p| p.z_index()).unwrap_or_default());
         for plugin in plugins {
-            plugin.borrow().draw(frame, area, &self.plugins);
+            if let Some(plugin) = plugin.borrow() {
+                plugin.draw(frame, area, &self.plugins);
+            }
         }
     }
 
@@ -303,7 +354,9 @@ impl StateManager {
     pub(crate) fn on_load(&mut self) -> Result<()> {
         event!(Level::INFO, "Running on loads");
         for plugin in self.plugins.plugins.iter() {
-            plugin.borrow_mut().on_load(&mut self.events)?;
+            if let Some(mut plugin) = plugin.borrow_mut() {
+                plugin.on_load(&mut self.events)?;
+            }
         }
         Ok(())
     }
@@ -319,6 +372,9 @@ mod tests {
     use crate::PluginStore;
 
     mod events {
+        use std::any::Any;
+
+        use crate::plugin_manager::RawEvent;
         use crate::EventManager;
 
         #[test]
@@ -394,6 +450,18 @@ mod tests {
         }
 
         #[test]
+        fn dispatch_raw() {
+            let mut events = EventManager::new();
+            events.ensure_event::<i32>();
+
+            let event: Box<dyn RawEvent> = Box::new(10_i32);
+            events.dispatch_raw(event);
+            events.swap_buffers();
+
+            assert_eq!(events.read::<i32>(), &[10]);
+        }
+
+        #[test]
         fn split() {
             let mut events = EventManager::new();
             events.dispatch(10_i32);
@@ -407,6 +475,19 @@ mod tests {
 
             events.swap_buffers();
             assert_eq!(events.read::<i8>(), &[20, 20]);
+        }
+
+        #[test]
+        fn split_dispatch_raw() {
+            let mut events = EventManager::new();
+            events.ensure_event::<i32>();
+
+            let (_reader, mut writer) = events.split();
+            let event: Box<dyn RawEvent> = Box::new(10_i32);
+            writer.dispatch_raw(event);
+
+            events.swap_buffers();
+            assert_eq!(events.read::<i32>(), &[10]);
         }
     }
 
@@ -482,5 +563,25 @@ mod tests {
             plugins.get::<TestPlugin>().map(|x| *x),
             Some(TestPlugin(20))
         );
+    }
+
+    #[test]
+    fn break_borrow_rules_mut() {
+        let mut plugins = PluginStore::new();
+        plugins.insert(TestPlugin(10));
+
+        let plugin = plugins.get::<TestPlugin>();
+        assert!(plugins.get_mut::<TestPlugin>().is_none());
+        drop(plugin);
+    }
+
+    #[test]
+    fn break_borrow_rules_ref() {
+        let mut plugins = PluginStore::new();
+        plugins.insert(TestPlugin(10));
+
+        let plugin = plugins.get_mut::<TestPlugin>();
+        assert!(plugins.get::<TestPlugin>().is_none());
+        drop(plugin);
     }
 }

@@ -39,6 +39,7 @@
 )]
 #![feature(trait_upcasting)]
 #![feature(coverage_attribute)]
+#![feature(iter_intersperse)]
 
 mod anymap;
 mod app;
@@ -60,7 +61,15 @@ mod prelude {
     pub use crate::plugin_loading::windows::{Window, WindowEvent};
     pub use crate::plugin_manager::{EventManager, Plugin, PluginStore};
 }
+use std::io::Write;
+
 use color_eyre::eyre::OptionExt;
+use crossterm::event::{
+    KeyboardEnhancementFlags,
+    PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
+};
+use crossterm::execute;
 use directories::ProjectDirs;
 use prelude::*;
 
@@ -82,8 +91,17 @@ fn main() -> Result<()> {
 
 /// Create terminal and start the app
 fn start_application() -> Result<()> {
-    let terminal = ratatui::init();
-    app::App::new().run(terminal)?;
+    let mut terminal = ratatui::init();
+    execute!(
+        terminal.backend_mut(),
+        PushKeyboardEnhancementFlags(
+            KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+        )
+    )
+    .unwrap();
+    app::App::new().run(&mut terminal)?;
+    execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags).unwrap();
     ratatui::restore();
 
     Ok(())

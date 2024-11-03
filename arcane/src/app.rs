@@ -33,7 +33,7 @@ impl App {
     #[inline(always)]
     pub(crate) fn run(
         mut self,
-        mut terminal: ratatui::Terminal<impl ratatui::backend::Backend>,
+        terminal: &mut ratatui::Terminal<impl ratatui::backend::Backend>,
     ) -> Result<()> {
         event!(Level::INFO, "Starting Application");
         self.editor.on_load()?;
