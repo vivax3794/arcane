@@ -1,1 +1,6 @@
 allow-unwrap-in-tests = true
+disallowed-methods = [
+    "std::cell::RefCell::borrow",
+    "std::cell::RefCell::borrow_mut",
+]
+

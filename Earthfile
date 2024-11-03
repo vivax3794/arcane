@@ -18,7 +18,7 @@ test:
     RUN cargo install cargo-llvm-cov
     RUN cargo install cargo-nextest
     DO +COPY_SOURCE
-    DO rust+CARGO --args="llvm-cov --html nextest --all-features" --output="llvm-cov/html/.*"
+    DO rust+CARGO --args="llvm-cov --html nextest --all-features --no-fail-fast" --output="llvm-cov/html/.*"
     SAVE ARTIFACT ./target/llvm-cov/html coverage AS LOCAL ./artifacts/coverage
 
 lint:

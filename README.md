@@ -5,7 +5,7 @@ A terminal editor written in rust.
 This project is super super early... we literally dont have a editor yet, just a bunch of foundations!
 
 # Dependencies
-You only require [Earthly](https://earthly.dev/get-earthly) to build the project and it will build the binary in a docker container for you then copy it to the host.
+You only require [Earthly](https://earthly.dev/get-earthly) to build the project and it will build the binary in a docker container for you then copy it to the host. You can also compile it directly using rust if you have it installed, using `cargo run` / `cargo build`, the instructions below are for earthly
 
 # Run
 To get started, clone the repository
