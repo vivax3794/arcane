@@ -61,8 +61,6 @@ mod prelude {
     pub use crate::plugin_loading::windows::{Window, WindowEvent};
     pub use crate::plugin_manager::{EventManager, Plugin, PluginStore};
 }
-use std::io::Write;
-
 use color_eyre::eyre::OptionExt;
 use crossterm::event::{
     KeyboardEnhancementFlags,

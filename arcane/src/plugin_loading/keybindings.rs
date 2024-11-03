@@ -1,6 +1,5 @@
 //! Handles abstracting actions into keybindings
 
-use std::any::Any;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
@@ -52,12 +51,15 @@ impl KeyBind {
     }
 }
 
+/// Stores a list of keys
 #[derive(PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
 pub struct Chord {
+    /// The order of keys that need to be hit
     pub keys: Box<[KeyBind]>,
 }
 
 impl Chord {
+    /// Render a human readable version of the binding
     fn render(&self) -> String {
         self.keys
             .iter()
@@ -67,9 +69,11 @@ impl Chord {
     }
 }
 
-trait BindResult: RawEvent + DynClone {}
+/// Trait that implements everything a event needs to be dispatched by the keybinding system
+pub trait BindResult: RawEvent + DynClone {}
 impl<T: RawEvent + Clone> BindResult for T {}
 
+/// How is a keybinding event stored
 type KeyBindEvent = Box<dyn BindResult>;
 
 /// Set the keybind
@@ -81,6 +85,7 @@ pub struct SetKeybind {
 }
 
 impl SetKeybind {
+    /// Shortcut for a keybiding with a single key
     pub fn single_key<E>(key: KeyBind, event: E) -> Self
     where
         E: BindResult + 'static,
@@ -93,6 +98,7 @@ impl SetKeybind {
         }
     }
 
+    /// Shortcut for a keybiding with a chord key
     pub fn chord<E>(keys: impl IntoIterator<Item = KeyBind>, event: E) -> Self
     where
         E: BindResult + 'static,
@@ -106,6 +112,7 @@ impl SetKeybind {
     }
 }
 
+/// This holds a immutable trie tree, and a mutable incremental search of it
 #[self_referencing]
 struct TrieHolder {
     bindings_tree: Trie<KeyBind, KeyBindEvent>,
@@ -115,6 +122,7 @@ struct TrieHolder {
 }
 
 impl TrieHolder {
+    /// Create the trie tree from the hashmap
     fn from_raw(raw: &HashMap<Chord, KeyBindEvent>) -> Self {
         let mut builder = TrieBuilder::new();
         for (chord, event) in raw {
@@ -128,15 +136,20 @@ impl TrieHolder {
         .build()
     }
 
+    ///Search for possible keybinds
     fn search(&mut self, key: &KeyBind) -> Option<Answer> {
         self.with_search_mut(|search| search.query(key))
     }
 
+    /// Get the current match when there is some
     fn get_match(&mut self) -> Option<&KeyBindEvent> {
         self.with_search_mut(|search| search.value())
     }
 
+    /// Clear the search
     fn clear(&mut self) {
+        // The suggestion causes a compiler error
+        #[allow(clippy::redundant_closure_for_method_calls)]
         self.with_search_mut(|search| search.reset());
     }
 }
@@ -145,19 +158,31 @@ impl TrieHolder {
 pub struct KeybindPlugin {
     /// Holds the bindings, the key is a combimation of the owning plugin and the name
     raw_bindings: HashMap<Chord, KeyBindEvent>,
+    /// The trie tree
     trie: TrieHolder,
 }
 
+/// Generic events to move around a menu
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MenuEvent {
+    /// Move to the left
     Left,
+    /// Move to the right
     Right,
+    /// Move to the up
     Up,
+    /// Move to the down
     Down,
+    /// select something
     Select,
+    /// alt select something
     AltSelect,
 }
+
+/// Open the keybinding menu
+#[derive(Clone)]
+struct OpenKeybindings;
 
 impl KeybindPlugin {
     /// Create a empty plugin
@@ -242,6 +267,21 @@ impl Plugin for KeybindPlugin {
             },
             MenuEvent::AltSelect,
         ));
+
+        events.ensure_event::<OpenKeybindings>();
+        events.dispatch(SetKeybind::chord(
+            [
+                KeyBind {
+                    modifiers: KeyModifiers::CONTROL,
+                    key: KeyCode::Char('p'),
+                },
+                KeyBind {
+                    modifiers: KeyModifiers::CONTROL,
+                    key: KeyCode::Char('k'),
+                },
+            ],
+            OpenKeybindings,
+        ));
         Ok(())
     }
 
@@ -283,6 +323,10 @@ impl Plugin for KeybindPlugin {
                 }
                 Some(Answer::Prefix | Answer::PrefixAndMatch) => {}
             }
+        }
+
+        for _ in reader.read::<OpenKeybindings>() {
+            writer.dispatch(WindowEvent::CreateWindow(Box::new(KeybindWindow)));
         }
 
         Ok(())

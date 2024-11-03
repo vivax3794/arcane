@@ -7,7 +7,6 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use dyn_clone::DynClone;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Style};
-use ratatui::text::Text;
 use ratatui::widgets::{Gauge, Paragraph, Tabs};
 
 use super::keybindings::MenuEvent;
@@ -42,6 +41,9 @@ pub struct SettingsValueCommon<'v> {
 }
 
 impl SettingsValueCommon<'_> {
+    /// Update a settings
+    ///
+    /// `alt_mode` indicated the update should happen in the other direction.
     fn handle_settings_update(self, alt_mode: bool) {
         match self.value {
             SettingsValue::Toogle(value) => {
@@ -151,6 +153,7 @@ pub fn get_settings<S: PluginSettings>(store: &PluginStore) -> Option<Ref<S>> {
     settings.ok()
 }
 
+/// Open the settings menu
 #[derive(Clone)]
 struct OpenSettings;
 

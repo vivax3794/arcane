@@ -46,13 +46,13 @@ pub trait Plugin: Any {
     }
 }
 
-/// A wrapper trait around vectors (or anything really) that can be cleared.
-/// Also contains wrapper methods to allow downcasting.
+/// A wrapper trait around vectors (or anything really) that can be used as a queue.
 /// Used to allow to type safely clear out all queues in the event manager without clearing the
 /// hashmap itself.
 trait DynVec: Any {
     /// Clear the container
     fn clear(&mut self);
+    /// Push a element onto the vector, if types dont match ignore it
     fn push(&mut self, element: Box<dyn Any>);
 }
 
@@ -66,7 +66,7 @@ where
 
     fn push(&mut self, element: Box<dyn Any>) {
         if let Ok(element) = element.downcast() {
-            self.push(*element)
+            self.push(*element);
         }
     }
 }
@@ -92,7 +92,11 @@ impl<T: DynVec> IntoBoxed<dyn DynVec> for T {
     }
 }
 
+/// A raw event is the trait needed to be implemented for types used in `dispatch_raw`
+///
+/// This is implemented for all types
 pub trait RawEvent: Any {
+    /// Get the type id of a `Vec` containing this type
     fn vec_type_id(&self) -> TypeId;
 }
 impl<T: Any> RawEvent for T {
@@ -372,8 +376,6 @@ mod tests {
     use crate::PluginStore;
 
     mod events {
-        use std::any::Any;
-
         use crate::plugin_manager::RawEvent;
         use crate::EventManager;
 

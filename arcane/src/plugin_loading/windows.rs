@@ -162,10 +162,14 @@ impl WindowPlugin {
     }
 }
 
+/// Ui Events for windows
 #[derive(Clone)]
 enum WindowUiEvent {
+    /// Move focus to the left
     FocusLeft,
+    /// Move focus to the right
     FocusRight,
+    /// Delete the window that is in focus
     DeleteFocus,
 }
 
