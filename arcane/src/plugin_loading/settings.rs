@@ -2,18 +2,22 @@
 
 use std::any::Any;
 use std::cell::Ref;
+use std::fs::{self, create_dir_all};
 
 use crossterm::event::{KeyCode, KeyModifiers};
 use dyn_clone::DynClone;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Gauge, Paragraph, Tabs};
+use serde::{Deserialize, Serialize};
 
-use super::keybindings::MenuEvent;
+use super::keybindings::{BindResult, MenuEvent};
 use crate::anymap::{self, AnyMap};
 use crate::prelude::*;
+use crate::project_dirs;
 
 /// The value in enum
+#[derive(Debug)]
 pub enum SettingsValue<'v> {
     /// A integer value
     Integer {
@@ -27,12 +31,13 @@ pub enum SettingsValue<'v> {
         step: i32,
     },
     /// Multiple Kinds of Values
-    Selection(&'v mut &'static str, &'static [&'static str]),
+    Selection(&'v mut String, &'static [&'static str]),
     /// A toogle
     Toogle(&'v mut bool),
 }
 
 /// Common metadata for settings
+#[derive(Debug)]
 pub struct SettingsValueCommon<'v> {
     /// The name of the settings
     pub name: &'static str,
@@ -68,7 +73,7 @@ impl SettingsValueCommon<'_> {
                 };
 
                 if let Some(new) = possible.get(selected) {
-                    *value = new;
+                    *value = String::from(*new);
                 }
             }
             SettingsValue::Integer {
@@ -88,6 +93,7 @@ impl SettingsValueCommon<'_> {
 }
 
 /// Settings for a specific plugin
+#[typetag::serde(tag = "plugin", content = "settings")]
 pub trait PluginSettings: Any + DynClone {
     /// Used for serializing and loading settings.
     fn name(&self) -> &'static str;
@@ -154,13 +160,22 @@ pub fn get_settings<S: PluginSettings>(store: &PluginStore) -> Option<Ref<S>> {
 }
 
 /// Open the settings menu
-#[derive(Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct OpenSettings;
 
+#[typetag::serde]
+impl BindResult for OpenSettings {}
+
+/// Save the settings
+#[derive(Clone, Debug)]
+struct SaveSettings;
+
+#[errors]
 impl Plugin for SettingsPlugin {
+    #[errors(serde_json::Error)]
     fn on_load(&mut self, events: &mut EventManager) -> Result<()> {
         events.ensure_event::<OpenSettings>();
-        events.dispatch(SetKeybind::chord(
+        events.dispatch(RegisterKeybind::chord(
             [
                 KeyBind {
                     modifiers: KeyModifiers::CONTROL,
@@ -173,18 +188,45 @@ impl Plugin for SettingsPlugin {
             ],
             OpenSettings,
         ));
+
+        if let Some(project_directory) = project_dirs() {
+            let config_path = project_directory.config_dir().join("config.json");
+            if let Ok(file) = fs::File::open(&config_path) {
+                let data: Vec<Box<dyn PluginSettings>> = serde_json::de::from_reader(file)?;
+                for value in data {
+                    self.settings.insert_raw(value);
+                }
+            }
+        }
+
         Ok(())
     }
 
+    #[errors(std::io::Error, serde_json::Error)]
     fn update(&mut self, events: &mut EventManager, _plugins: &PluginStore) -> Result<()> {
         for event in events.read::<RegisterSettings>() {
             let settings = dyn_clone::clone_box(&*event.0);
-            self.settings.insert_raw(settings);
+            self.settings.insert_raw_if_missing(settings);
         }
 
         let (reader, mut writer) = events.split();
         for _ in reader.read::<OpenSettings>() {
             writer.dispatch(WindowEvent::CreateWindow(Box::new(SettingsWindow::new())));
+        }
+
+        if !reader.read::<SaveSettings>().is_empty() {
+            let Some(project_directory) = project_dirs() else {
+                return Ok(());
+            };
+            let config_dir = project_directory.config_dir();
+
+            create_dir_all(config_dir)?;
+            let config_path = config_dir.join("config.json");
+            event!(Level::INFO, "Saving config to {config_path:?}");
+            let file = std::fs::File::create(config_path)?;
+
+            let settings = self.settings.iter().collect::<Vec<_>>();
+            serde_json::ser::to_writer_pretty(file, &settings)?;
         }
 
         Ok(())
@@ -217,6 +259,7 @@ impl Window for SettingsWindow {
         String::from("Settings")
     }
 
+    #[errors()]
     fn update(
         &mut self,
         events: &mut EventManager,
@@ -232,6 +275,7 @@ impl Window for SettingsWindow {
             return Ok(());
         };
 
+        let mut modified_settings = false;
         for event in events.read::<MenuEvent>() {
             match event {
                 MenuEvent::Left => {
@@ -262,8 +306,12 @@ impl Window for SettingsWindow {
                         return Ok(());
                     };
                     value.handle_settings_update(event == &MenuEvent::AltSelect);
+                    modified_settings = true;
                 }
             }
+        }
+        if modified_settings {
+            events.dispatch(SaveSettings);
         }
 
         Ok(())
@@ -352,7 +400,7 @@ mod tests {
 
     #[test]
     fn select_one() {
-        let mut value = "1";
+        let mut value = String::from("1");
         let settings_value = SettingsValueCommon {
             name: "test",
             value: SettingsValue::Selection(&mut value, &["1", "2"]),
@@ -364,7 +412,7 @@ mod tests {
 
     #[test]
     fn select_one_alt() {
-        let mut value = "2";
+        let mut value = String::from("2");
         let settings_value = SettingsValueCommon {
             name: "test",
             value: SettingsValue::Selection(&mut value, &["1", "2", "3"]),
@@ -376,7 +424,7 @@ mod tests {
 
     #[test]
     fn select_overflow() {
-        let mut value = "1";
+        let mut value = String::from("1");
 
         let settings_value = SettingsValueCommon {
             name: "test",
@@ -395,7 +443,7 @@ mod tests {
 
     #[test]
     fn select_overflow_alt() {
-        let mut value = "1";
+        let mut value = String::from("1");
         let settings_value = SettingsValueCommon {
             name: "test",
             value: SettingsValue::Selection(&mut value, &["1", "2", "3"]),
@@ -407,7 +455,7 @@ mod tests {
 
     #[test]
     fn select_invalid() {
-        let mut value = "invalid";
+        let mut value = String::from("invalid");
 
         let settings_value = SettingsValueCommon {
             name: "test",

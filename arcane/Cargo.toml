@@ -5,22 +5,31 @@ edition = "2021"
 license = "MIT"
 
 [dependencies]
-crossterm = "0.28"
-ratatui = "0.28"
+error_mancer = "0.4"
+
+crossterm = {version="0.28", features=["serde"]}
+ratatui = {version="0.29", features=["serde"]}
 
 color-eyre = "0.6"
-ansi-to-tui = "6"
+ansi-to-tui = "7"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 tracing-error = "0.2"
-tui-logger = {version="0.13", features=["tracing-support"]}
-log = "0.4"
+
+serde = {version="1", features=["derive"]}
+typetag = "0.2"
+serde_json = "1"
 
 directories = "5"
 derive_more = {version="1", features=["debug"]}
 dyn-clone = "1"
 trie-rs = "0.4"
 ouroboros = "0.18"
+bytecount = {version="0.6", features=["generic-simd"]}
+nucleo-matcher = "0.3"
 
 [dev-dependencies]
 proptest = "1"
+
+[features]
+ansi_log_file = []

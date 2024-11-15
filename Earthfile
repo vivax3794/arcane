@@ -49,10 +49,10 @@ build:
     DO +COPY_SOURCE
 
     IF $release
-        DO rust+CARGO --args="build --release -p arcane" --output="release/arcane"
+        DO rust+CARGO --args="build --release -p arcane --all-features" --output="release/arcane"
         SAVE ARTIFACT ./target/release/arcane arcane AS LOCAL "./artifacts/bin/arcane"
     ELSE
-        DO rust+CARGO --args="build -p arcane" --output="debug/arcane"
+        DO rust+CARGO --args="build -p arcane --all-features" --output="debug/arcane"
         SAVE ARTIFACT ./target/debug/arcane arcane AS LOCAL "./artifacts/bin/arcane"
     END
 

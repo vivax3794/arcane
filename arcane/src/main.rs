@@ -40,6 +40,7 @@
 #![feature(trait_upcasting)]
 #![feature(coverage_attribute)]
 #![feature(iter_intersperse)]
+#![feature(map_try_insert)]
 
 mod anymap;
 mod app;
@@ -53,15 +54,15 @@ pub mod plugin_manager;
 mod prelude {
     pub use color_eyre::eyre::eyre;
     pub use color_eyre::Result;
+    pub use error_mancer::prelude::*;
     pub use ratatui::style::Stylize;
     pub use tracing::{event, instrument, span, Level};
 
     pub use crate::editor::KeydownEvent;
-    pub use crate::plugin_loading::keybindings::{KeyBind, KeybindPlugin, SetKeybind};
+    pub use crate::plugin_loading::keybindings::{KeyBind, KeybindPlugin, RegisterKeybind};
     pub use crate::plugin_loading::windows::{Window, WindowEvent};
     pub use crate::plugin_manager::{EventManager, Plugin, PluginStore};
 }
-use color_eyre::eyre::OptionExt;
 use crossterm::event::{
     KeyboardEnhancementFlags,
     PopKeyboardEnhancementFlags,
@@ -69,26 +70,35 @@ use crossterm::event::{
 };
 use crossterm::execute;
 use directories::ProjectDirs;
+use logging::Logger;
 use prelude::*;
 
 /// Get a struct that can be used to get the project directories to use
 ///
 /// # Errors
 /// If missing envs
-pub fn project_dirs() -> Result<ProjectDirs> {
-    ProjectDirs::from("dev", "viv", "arcane")
-        .ok_or_eyre("Could not construct OS project directories.")
+pub fn project_dirs() -> Option<ProjectDirs> {
+    let result = ProjectDirs::from("dev", "viv", "arcane");
+    if result.is_none() {
+        event!(
+            Level::ERROR,
+            "Project Directories not found, config and similar will not be saved."
+        );
+    }
+    result
 }
 
 fn main() -> Result<()> {
-    logging::setup()?;
-    start_application()?;
+    let logs = logging::setup()?;
 
-    Ok(())
+    let result = start_application(logs);
+    ratatui::restore();
+
+    result
 }
 
 /// Create terminal and start the app
-fn start_application() -> Result<()> {
+fn start_application(logs: Logger) -> Result<()> {
     let mut terminal = ratatui::init();
     execute!(
         terminal.backend_mut(),
@@ -98,9 +108,8 @@ fn start_application() -> Result<()> {
         )
     )
     .unwrap();
-    app::App::new().run(&mut terminal)?;
+    app::App::new(logs).run(&mut terminal)?;
     execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags).unwrap();
-    ratatui::restore();
 
     Ok(())
 }

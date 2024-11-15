@@ -31,12 +31,13 @@ impl FpsPlugin {
             fps_history: Vec::new(),
             last_delta: 0.0,
             last_recording: 0.0,
-            show_fps: true,
+            show_fps: false,
         }
     }
 }
 
 impl Plugin for FpsPlugin {
+    #[errors]
     fn update(&mut self, events: &mut EventManager, _plugins: &PluginStore) -> Result<()> {
         if !self.show_fps {
             return Ok(());

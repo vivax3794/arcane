@@ -382,7 +382,7 @@ mod tests {
         #[test]
         fn read_empty() {
             let events = EventManager::new();
-            assert_eq!(events.read::<i32>(), []);
+            assert!(events.read::<i32>().is_empty());
         }
 
         #[test]
@@ -425,7 +425,7 @@ mod tests {
             events.dispatch(10_i32);
             events.dispatch(20_i32);
 
-            assert_eq!(events.read::<i32>(), []);
+            assert!(events.read::<i32>().is_empty());
         }
 
         #[test]

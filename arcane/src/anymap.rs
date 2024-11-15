@@ -120,6 +120,15 @@ where
         let key = (*value).type_id();
         self.0.insert(key, value);
     }
+
+    /// Insert Raw, but only insert if the key doesnt exsist
+    pub(crate) fn insert_raw_if_missing(&mut self, value: Box<A>)
+    where
+        A: Any,
+    {
+        let key = (*value).type_id();
+        let _ = self.0.try_insert(key, value);
+    }
 }
 
 /// A entry in the map

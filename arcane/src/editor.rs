@@ -1,11 +1,14 @@
 //! The editor root
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crossterm::event::KeyEvent;
 use ratatui::layout::Rect;
 use ratatui::Frame;
+use serde::{Deserialize, Serialize};
 
+use crate::logging::Logger;
 use crate::plugin_loading::settings::{
     get_settings,
     PluginSettings,
@@ -27,12 +30,13 @@ pub struct KeydownEvent(pub KeyEvent);
 /// Core Editor settings
 ///
 /// NOTE: These should be EXTREMELY minimal (in fact I kinda hate I need it)
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 struct EditorSettings {
     /// How long should the program wait on events before rendering the next frame
     event_polling_rate: i32,
 }
 
+#[typetag::serde]
 impl PluginSettings for EditorSettings {
     fn name(&self) -> &'static str {
         "Core"
@@ -44,7 +48,7 @@ impl PluginSettings for EditorSettings {
                 value: &mut self.event_polling_rate,
                 min: 0,
                 max: 100,
-                step: 10,
+                step: 1,
             },
         }])
     }
@@ -56,25 +60,28 @@ pub(crate) struct Editor {
     state: StateManager,
     /// At what point did the last frame happen
     last_frame: Instant,
+    /// Reference to the logs
+    logs: Logger,
 }
 
 impl Editor {
     /// Create a new editor instance
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(logs: Logger) -> Self {
         Self {
             state: StateManager::new(),
             last_frame: std::time::Instant::now(),
+            logs,
         }
     }
 
     /// Does inital setup
     pub(crate) fn on_load(&mut self) -> Result<()> {
-        crate::plugin_loading::load_plugins(&mut self.state.plugins);
+        crate::plugin_loading::load_plugins(&mut self.state.plugins, Arc::clone(&self.logs));
         self.state.on_load()?;
         self.state
             .events
             .dispatch(RegisterSettings(Box::new(EditorSettings {
-                event_polling_rate: 1,
+                event_polling_rate: 10,
             })));
         Ok(())
     }
@@ -118,10 +125,11 @@ mod tests {
     use std::time::Duration;
 
     use super::{DeltaTimeEvent, Editor};
+    use crate::logging::Logger;
 
     #[test]
     fn on_load() {
-        let mut editor = Editor::new();
+        let mut editor = Editor::new(Logger::default());
         editor.on_load().unwrap();
     }
 
@@ -129,7 +137,7 @@ mod tests {
     fn test_update_delta() {
         const DURATION: f32 = 0.5;
 
-        let mut editor = Editor::new();
+        let mut editor = Editor::new(Logger::default());
         editor.update().unwrap();
         thread::sleep(Duration::from_secs_f32(DURATION));
         editor.update().unwrap();

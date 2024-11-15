@@ -12,6 +12,7 @@ use crate::prelude::*;
 pub(super) struct SplashScreenPlugin;
 
 impl Plugin for SplashScreenPlugin {
+    #[errors]
     fn on_load(&mut self, events: &mut EventManager) -> Result<()> {
         events.dispatch(WindowEvent::CreateWindow(Box::new(SplashScreenWindow)));
         Ok(())
@@ -27,6 +28,7 @@ impl Window for SplashScreenWindow {
         String::from("Splash Screen")
     }
 
+    #[errors]
     fn update(
         &mut self,
         events: &mut EventManager,

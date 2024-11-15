@@ -7,6 +7,7 @@ use ratatui::symbols::border;
 use ratatui::widgets::{Block, Clear, Padding, Paragraph};
 
 use crate::editor::Editor;
+use crate::logging::Logger;
 use crate::prelude::*;
 
 /// The root app
@@ -21,9 +22,9 @@ pub(crate) struct App {
 
 impl App {
     /// Create new default app
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(logs: Logger) -> Self {
         Self {
-            editor: Editor::new(),
+            editor: Editor::new(logs),
             exit_application: false,
             error_popup: None,
         }
@@ -134,10 +135,11 @@ mod tests {
     use ratatui::backend::TestBackend;
 
     use super::App;
+    use crate::logging::Logger;
 
     #[test]
     fn create() {
-        let _ = App::new();
+        let _ = App::new(Logger::default());
     }
 
     #[test]
@@ -151,7 +153,7 @@ mod tests {
 
     #[test]
     fn key_quit() {
-        let mut app = App::new();
+        let mut app = App::new(Logger::default());
         app.handle_key(KeyEvent {
             modifiers: KeyModifiers::CONTROL,
             code: KeyCode::Char('c'),
@@ -163,14 +165,14 @@ mod tests {
 
     #[test]
     fn error_open() {
-        let mut app = App::new();
+        let mut app = App::new(Logger::default());
         app.handle_error(eyre!("OH NO!"));
         assert!(app.error_popup.is_some());
     }
 
     #[test]
     fn error_close() {
-        let mut app = App::new();
+        let mut app = App::new(Logger::default());
         app.handle_error(eyre!("OH NO!"));
         app.handle_key(KeyEvent {
             modifiers: KeyModifiers::NONE,

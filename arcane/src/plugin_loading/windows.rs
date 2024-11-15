@@ -5,11 +5,14 @@ use std::mem;
 use std::str::FromStr;
 
 use crossterm::event::{KeyCode, KeyModifiers};
+use derive_more::derive::Debug;
 use dyn_clone::DynClone;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::Color;
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
+use serde::{Deserialize, Serialize};
 
+use super::keybindings::BindResult;
 use super::settings::{
     get_settings,
     PluginSettings,
@@ -69,18 +72,31 @@ pub enum WindowEvent {
 }
 
 /// Settings for displaying windows
-#[derive(Clone, Copy)]
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(default)]
 struct WindowSettings {
     /// The kind of border
-    focus_border_type: &'static str,
+    focus_border_type: String,
     /// The border type for unfocused windows
-    other_border_type: &'static str,
+    other_border_type: String,
     /// Should focus border only be on the sides or all around
     focus_full_border: bool,
     /// Should other windows have full borders
     all_full_border: bool,
 }
 
+impl Default for WindowSettings {
+    fn default() -> Self {
+        Self {
+            focus_border_type: String::from("Double"),
+            other_border_type: String::from("Rounded"),
+            focus_full_border: true,
+            all_full_border: true,
+        }
+    }
+}
+
+#[typetag::serde]
 impl PluginSettings for WindowSettings {
     fn name(&self) -> &'static str {
         "Windows"
@@ -163,55 +179,42 @@ impl WindowPlugin {
 }
 
 /// Ui Events for windows
-#[derive(Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 enum WindowUiEvent {
     /// Move focus to the left
+    #[debug("Window::FocusLeft")]
     FocusLeft,
     /// Move focus to the right
+    #[debug("Window::FocusRight")]
     FocusRight,
     /// Delete the window that is in focus
+    #[debug("Window::Close")]
     DeleteFocus,
 }
 
+#[typetag::serde]
+impl BindResult for WindowUiEvent {}
+
 impl Plugin for WindowPlugin {
     fn on_load(&mut self, events: &mut EventManager) -> Result<()> {
-        events.dispatch(RegisterSettings(Box::new(WindowSettings {
-            focus_border_type: "Double",
-            other_border_type: "Rounded",
-            focus_full_border: true,
-            all_full_border: true,
-        })));
+        events.dispatch(RegisterSettings(Box::new(WindowSettings::default())));
 
         events.ensure_event::<WindowUiEvent>();
-        events.dispatch(SetKeybind::single_key(
+        events.dispatch(RegisterKeybind::single_key(
             KeyBind {
                 modifiers: KeyModifiers::CONTROL,
                 key: KeyCode::Char('h'),
             },
             WindowUiEvent::FocusLeft,
         ));
-        events.dispatch(SetKeybind::single_key(
-            KeyBind {
-                modifiers: KeyModifiers::CONTROL,
-                key: KeyCode::Left,
-            },
-            WindowUiEvent::FocusLeft,
-        ));
-        events.dispatch(SetKeybind::single_key(
+        events.dispatch(RegisterKeybind::single_key(
             KeyBind {
                 modifiers: KeyModifiers::CONTROL,
                 key: KeyCode::Char('l'),
             },
             WindowUiEvent::FocusRight,
         ));
-        events.dispatch(SetKeybind::single_key(
-            KeyBind {
-                modifiers: KeyModifiers::CONTROL,
-                key: KeyCode::Right,
-            },
-            WindowUiEvent::FocusRight,
-        ));
-        events.dispatch(SetKeybind::single_key(
+        events.dispatch(RegisterKeybind::single_key(
             KeyBind {
                 modifiers: KeyModifiers::CONTROL,
                 key: KeyCode::Char('w'),
@@ -257,7 +260,7 @@ impl Plugin for WindowPlugin {
             match event {
                 WindowEvent::CreateWindow(window) => {
                     let id = self.next_free;
-                    event!(Level::INFO, "Created window {id}");
+                    event!(Level::DEBUG, "Created window {id}");
                     if let Some(new_id) = self.next_free.checked_add(1) {
                         self.next_free = new_id;
                     } else {
@@ -269,7 +272,7 @@ impl Plugin for WindowPlugin {
                     self.focused = self.window_order.len().saturating_sub(1);
                 }
                 WindowEvent::CloseWindow(id) => {
-                    event!(Level::INFO, "Deleting window {id}");
+                    event!(Level::DEBUG, "Deleting window {id}");
                     if let Some(mut removed_window) = self.windows.remove(id) {
                         removed_window.on_remove(events, plugins)?;
                     }
@@ -297,7 +300,7 @@ impl Plugin for WindowPlugin {
         let Some(settings_ref) = get_settings::<WindowSettings>(plugins) else {
             return;
         };
-        let settings = *settings_ref;
+        let settings = settings_ref.clone();
         drop(settings_ref);
 
         let windows = self
@@ -331,12 +334,12 @@ impl Plugin for WindowPlugin {
             let (color, border_type) = if focused {
                 (
                     Color::LightYellow,
-                    BorderType::from_str(settings.focus_border_type).unwrap_or_default(),
+                    BorderType::from_str(&settings.focus_border_type).unwrap_or_default(),
                 )
             } else {
                 (
                     Color::LightGreen,
-                    BorderType::from_str(settings.other_border_type).unwrap_or_default(),
+                    BorderType::from_str(&settings.other_border_type).unwrap_or_default(),
                 )
             };
 
