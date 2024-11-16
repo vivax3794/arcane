@@ -3,10 +3,19 @@
 use ratatui::layout::{Constraint, Layout};
 use ratatui::text::ToLine;
 use ratatui::widgets::{Block, BorderType, Clear, Sparkline};
+use serde::{Deserialize, Serialize};
 
+use super::keybindings::BindResult;
 use crate::editor::DeltaTimeEvent;
 use crate::plugin_manager::{EventManager, Plugin, PluginStore};
 use crate::prelude::*;
+
+/// Toggle fps graph
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+pub struct ToggleFps;
+
+#[typetag::serde]
+impl BindResult for ToggleFps {}
 
 /// Record fps
 #[derive(Debug)]
@@ -38,7 +47,19 @@ impl FpsPlugin {
 
 impl Plugin for FpsPlugin {
     #[errors]
+    fn on_load(&mut self, events: &mut EventManager) -> Result<()> {
+        events.ensure_event::<ToggleFps>();
+        events.dispatch(RegisterKeybind::chord([], ToggleFps));
+
+        Ok(())
+    }
+
+    #[errors]
     fn update(&mut self, events: &mut EventManager, _plugins: &PluginStore) -> Result<()> {
+        for _ in events.read::<ToggleFps>() {
+            self.show_fps = !self.show_fps;
+        }
+
         if !self.show_fps {
             return Ok(());
         }

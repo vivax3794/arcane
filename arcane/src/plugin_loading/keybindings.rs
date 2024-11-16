@@ -34,34 +34,29 @@ pub struct KeyBind {
 
 impl KeyBind {
     /// Checks if the keybind is only a modifier key being pressed
-    fn is_only_modifiers(&self) -> bool {
-        match self.modifiers {
-            KeyModifiers::CONTROL => {
-                self.key == KeyCode::Modifier(ModifierKeyCode::LeftControl)
-                    || self.key == KeyCode::Modifier(ModifierKeyCode::RightControl)
-            }
-            KeyModifiers::ALT => {
-                self.key == KeyCode::Modifier(ModifierKeyCode::LeftAlt)
-                    || self.key == KeyCode::Modifier(ModifierKeyCode::RightAlt)
-            }
-            KeyModifiers::SHIFT => {
-                self.key == KeyCode::Modifier(ModifierKeyCode::LeftShift)
-                    || self.key == KeyCode::Modifier(ModifierKeyCode::RightShift)
-            }
-            KeyModifiers::META => {
-                self.key == KeyCode::Modifier(ModifierKeyCode::LeftMeta)
-                    || self.key == KeyCode::Modifier(ModifierKeyCode::RightMeta)
-            }
-            KeyModifiers::SUPER => {
-                self.key == KeyCode::Modifier(ModifierKeyCode::LeftSuper)
-                    || self.key == KeyCode::Modifier(ModifierKeyCode::RightSuper)
-            }
-            KeyModifiers::HYPER => {
-                self.key == KeyCode::Modifier(ModifierKeyCode::LeftHyper)
-                    || self.key == KeyCode::Modifier(ModifierKeyCode::RightHyper)
-            }
-            _ => false,
-        }
+    const fn is_only_modifiers(&self) -> bool {
+        matches!(
+            (self.modifiers, &self.key),
+            (
+                KeyModifiers::CONTROL,
+                KeyCode::Modifier(ModifierKeyCode::LeftControl | ModifierKeyCode::RightControl)
+            ) | (
+                KeyModifiers::ALT,
+                KeyCode::Modifier(ModifierKeyCode::LeftAlt | ModifierKeyCode::RightAlt)
+            ) | (
+                KeyModifiers::SHIFT,
+                KeyCode::Modifier(ModifierKeyCode::LeftShift | ModifierKeyCode::RightShift)
+            ) | (
+                KeyModifiers::META,
+                KeyCode::Modifier(ModifierKeyCode::LeftMeta | ModifierKeyCode::RightMeta)
+            ) | (
+                KeyModifiers::SUPER,
+                KeyCode::Modifier(ModifierKeyCode::LeftSuper | ModifierKeyCode::RightSuper)
+            ) | (
+                KeyModifiers::HYPER,
+                KeyCode::Modifier(ModifierKeyCode::LeftHyper | ModifierKeyCode::RightHyper)
+            )
+        )
     }
 }
 
@@ -170,6 +165,9 @@ impl TrieHolder {
     fn from_raw(raw: &HashMap<Chord, KeyBindEvent>) -> Self {
         let mut builder = TrieBuilder::new();
         for (chord, event) in raw {
+            if chord.keys.is_empty() {
+                continue;
+            }
             builder.push(chord.keys.clone(), dyn_clone::clone_box(&**event));
         }
 
@@ -612,7 +610,16 @@ impl Window for KeybindWindow {
                     } else {
                         Color::Reset
                     };
-                Row::new([key.clone(), action.clone()]).bg(background)
+                let key = if self.element_selected && i.saturating_add(1) == self.focused_element {
+                    self.recording
+                        .iter()
+                        .map(KeyBind::render)
+                        .intersperse(" ".into())
+                        .collect::<String>()
+                } else {
+                    key.clone()
+                };
+                Row::new([key, action.clone()]).bg(background)
             });
 
         let table = Table::new(rows, [Constraint::Fill(1), Constraint::Fill(1)]);

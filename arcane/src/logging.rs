@@ -100,7 +100,7 @@ pub fn setup() -> Result<Logger> {
         .with_writer(MemoryLoggerFactory {
             logger: Arc::clone(&in_app_logs),
         })
-        .with_filter(LevelFilter::from_level(Level::DEBUG));
+        .with_filter(LevelFilter::from_level(Level::INFO));
     let error_subscriber = tracing_error::ErrorLayer::default();
     tracing_subscriber::registry()
         .with(file_subscriber)
