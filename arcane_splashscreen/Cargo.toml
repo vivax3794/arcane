@@ -1,0 +1,11 @@
+[package]
+name = "arcane_splashscreen"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+arcane_core = { path = "../arcane_core" }
+arcane_windows = { path = "../arcane_windows" }
+
+error_mancer = "0.4"
+ratatui = "0.29"

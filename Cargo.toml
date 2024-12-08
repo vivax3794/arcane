@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["arcane"]
+members = ["arcane", "arcane_anymap", "arcane_core", "arcane_file_browser", "arcane_fps", "arcane_keybindings", "arcane_keybindings_window", "arcane_settings", "arcane_settings_window", "arcane_splashscreen", "arcane_windows"]
 
 [profile.release]
 lto = "fat"

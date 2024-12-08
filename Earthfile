@@ -9,17 +9,13 @@ env:
 
 COPY_SOURCE:
     FUNCTION
-    COPY --keep-ts Cargo.toml Cargo.lock README.md ./
-    COPY --keep-ts --dir arcane  ./
+    COPY --keep-ts . ./
 
 test:
     FROM +env
-    RUN rustup component add llvm-tools-preview
-    RUN cargo install cargo-llvm-cov
     RUN cargo install cargo-nextest
     DO +COPY_SOURCE
-    DO rust+CARGO --args="llvm-cov --html nextest --all-features --no-fail-fast" --output="llvm-cov/html/.*"
-    SAVE ARTIFACT ./target/llvm-cov/html coverage AS LOCAL ./artifacts/coverage
+    DO rust+CARGO --args="nextest run --all-features --no-fail-fast"
 
 lint:
     FROM +env

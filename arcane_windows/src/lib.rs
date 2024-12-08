@@ -1,33 +1,24 @@
 //! Handles drawing the core Windows
+#![feature(used_with_arg)]
 
 use std::collections::HashMap;
 use std::mem;
 use std::str::FromStr;
 
-use crossterm::event::{KeyCode, KeyModifiers};
+use arcane_anymap::dyn_clone;
+use arcane_core::{event, Level, Result};
+use arcane_keybindings::{KeyBind, KeyCode, KeyModifiers, RegisterKeybind};
 use derive_more::derive::Debug;
-use dyn_clone::DynClone;
 use ratatui::layout::{Constraint, Layout};
-use ratatui::style::Color;
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
+use ratatui::style::{Color, Style, Stylize};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Tabs};
 use serde::{Deserialize, Serialize};
-
-use super::keybindings::BindResult;
-use super::settings::{
-    get_settings,
-    PluginSettings,
-    RegisterSettings,
-    SettingsValue,
-    SettingsValueCommon,
-};
-use crate::plugin_manager::Plugin;
-use crate::prelude::*;
 
 /// Id ofs a window
 pub type WindowID = u8;
 
 /// Trait implementing all values needed for a window
-pub trait Window: DynClone {
+pub trait Window: dyn_clone::DynClone {
     /// The horizontal constarint for this window.
     ///
     /// Defaults to `Fill(1)`, i.e take up the same spaces as all other "normal windows"
@@ -43,14 +34,14 @@ pub trait Window: DynClone {
         &self,
         frame: &mut ratatui::Frame,
         area: ratatui::prelude::Rect,
-        plugins: &crate::plugin_manager::PluginStore,
+        plugins: &arcane_core::PluginStore,
     );
 
     /// Update call for the window
     fn update(
         &mut self,
-        _events: &mut EventManager,
-        _plugins: &PluginStore,
+        _events: &mut arcane_core::EventManager,
+        _plugins: &arcane_core::PluginStore,
         _focused: bool,
         _id: WindowID,
     ) -> Result<()> {
@@ -58,7 +49,11 @@ pub trait Window: DynClone {
     }
 
     /// Called when the window is deleted
-    fn on_remove(&mut self, _events: &EventManager, _plugins: &PluginStore) -> Result<()> {
+    fn on_remove(
+        &mut self,
+        _events: &arcane_core::EventManager,
+        _plugins: &arcane_core::PluginStore,
+    ) -> Result<()> {
         Ok(())
     }
 }
@@ -83,6 +78,8 @@ struct WindowSettings {
     focus_full_border: bool,
     /// Should other windows have full borders
     all_full_border: bool,
+    /// Always show the tab bar
+    always_show_tab_bar: bool,
 }
 
 impl Default for WindowSettings {
@@ -92,42 +89,47 @@ impl Default for WindowSettings {
             other_border_type: String::from("Rounded"),
             focus_full_border: true,
             all_full_border: true,
+            always_show_tab_bar: false,
         }
     }
 }
 
 #[typetag::serde]
-impl PluginSettings for WindowSettings {
+impl arcane_settings::PluginSettings for WindowSettings {
     fn name(&self) -> &'static str {
         "Windows"
     }
 
-    fn values(&mut self) -> Box<[SettingsValueCommon]> {
+    fn values(&mut self) -> Box<[arcane_settings::SettingsValueCommon]> {
         let all_full_border = self.all_full_border;
         let mut options = vec![
-            SettingsValueCommon {
+            arcane_settings::SettingsValueCommon {
                 name: "focus_border_type",
-                value: SettingsValue::Selection(
+                value: arcane_settings::SettingsValue::Selection(
                     &mut self.focus_border_type,
                     &["Double", "Rounded", "Plain"],
                 ),
             },
-            SettingsValueCommon {
+            arcane_settings::SettingsValueCommon {
                 name: "other_border_type",
-                value: SettingsValue::Selection(
+                value: arcane_settings::SettingsValue::Selection(
                     &mut self.other_border_type,
                     &["Double", "Rounded", "Plain"],
                 ),
             },
-            SettingsValueCommon {
+            arcane_settings::SettingsValueCommon {
                 name: "all_full_border",
-                value: SettingsValue::Toogle(&mut self.all_full_border),
+                value: arcane_settings::SettingsValue::Toogle(&mut self.all_full_border),
+            },
+            arcane_settings::SettingsValueCommon {
+                name: "always_show_tab_bar",
+                value: arcane_settings::SettingsValue::Toogle(&mut self.always_show_tab_bar),
             },
         ];
         if !all_full_border {
-            options.push(SettingsValueCommon {
+            options.push(arcane_settings::SettingsValueCommon {
                 name: "focus_full_border",
-                value: SettingsValue::Toogle(&mut self.focus_full_border),
+                value: arcane_settings::SettingsValue::Toogle(&mut self.focus_full_border),
             });
         }
         options.into_boxed_slice()
@@ -135,28 +137,22 @@ impl PluginSettings for WindowSettings {
 }
 
 /// The plugin
-pub(crate) struct WindowPlugin {
+pub struct WindowPlugin {
     /// The windows in view
     windows: HashMap<WindowID, Box<dyn Window>>,
     /// the next free ID
     next_free: WindowID,
-    /// The order of windows
-    window_order: Vec<WindowID>,
+    /// The list of tabs
+    tabs: Vec<Vec<WindowID>>,
     /// The currently focused window
-    focused: usize,
+    focused_window: usize,
+    /// The currently focused tab
+    focused_tab: usize,
 }
 
-impl WindowPlugin {
-    /// Create a empty instance
-    pub(super) fn new() -> Self {
-        WindowPlugin {
-            windows: HashMap::new(),
-            next_free: 0,
-            window_order: Vec::new(),
-            focused: 0,
-        }
-    }
+arcane_core::register_plugin!(WindowPlugin);
 
+impl WindowPlugin {
     /// Re assign all window ids
     ///
     /// Warning: This messes up references from the location datas, which I am honestly fine with
@@ -190,14 +186,43 @@ enum WindowUiEvent {
     /// Delete the window that is in focus
     #[debug("Window::Close")]
     DeleteFocus,
+    /// Move the window to the left
+    #[debug("Window::MoveLeft")]
+    MoveLeft,
+    /// Move the window to the right
+    #[debug("Window::MoveRight")]
+    MoveRight,
+    /// Create new tab
+    #[debug("Window::NewTab")]
+    NewTab,
+    /// Move to the next tab
+    #[debug("Window::NextTab")]
+    NextTab,
+    /// Move to the previous tab
+    #[debug("Window::PreviousTab")]
+    PreviousTab,
+    /// Close a tab
+    #[debug("Window::CloseTab")]
+    CloseTab,
 }
 
 #[typetag::serde]
-impl BindResult for WindowUiEvent {}
+impl arcane_keybindings::BindResult for WindowUiEvent {}
 
-impl Plugin for WindowPlugin {
-    fn on_load(&mut self, events: &mut EventManager) -> Result<()> {
-        events.dispatch(RegisterSettings(Box::new(WindowSettings::default())));
+impl arcane_core::Plugin for WindowPlugin {
+    fn new() -> Self {
+        WindowPlugin {
+            windows: HashMap::new(),
+            next_free: 0,
+            tabs: vec![vec![]],
+            focused_tab: 0,
+            focused_window: 0,
+        }
+    }
+    fn on_load(&mut self, events: &mut arcane_core::EventManager) -> Result<()> {
+        events.dispatch(arcane_settings::RegisterSettings(Box::new(
+            WindowSettings::default(),
+        )));
 
         events.ensure_event::<WindowUiEvent>();
         events.dispatch(RegisterKeybind::single_key(
@@ -221,18 +246,97 @@ impl Plugin for WindowPlugin {
             },
             WindowUiEvent::DeleteFocus,
         ));
+        events.dispatch(RegisterKeybind::chord(
+            [
+                KeyBind {
+                    modifiers: KeyModifiers::CONTROL,
+                    key: KeyCode::Char('m'),
+                },
+                KeyBind {
+                    modifiers: KeyModifiers::NONE,
+                    key: KeyCode::Char('h'),
+                },
+            ],
+            WindowUiEvent::MoveLeft,
+        ));
+        events.dispatch(RegisterKeybind::chord(
+            [
+                KeyBind {
+                    modifiers: KeyModifiers::CONTROL,
+                    key: KeyCode::Char('m'),
+                },
+                KeyBind {
+                    modifiers: KeyModifiers::NONE,
+                    key: KeyCode::Char('l'),
+                },
+            ],
+            WindowUiEvent::MoveRight,
+        ));
+        events.dispatch(RegisterKeybind::chord(
+            [
+                KeyBind {
+                    modifiers: KeyModifiers::CONTROL,
+                    key: KeyCode::Char('t'),
+                },
+                KeyBind {
+                    modifiers: KeyModifiers::CONTROL,
+                    key: KeyCode::Char('t'),
+                },
+            ],
+            WindowUiEvent::NewTab,
+        ));
+        events.dispatch(RegisterKeybind::chord(
+            [
+                KeyBind {
+                    modifiers: KeyModifiers::CONTROL,
+                    key: KeyCode::Char('t'),
+                },
+                KeyBind {
+                    modifiers: KeyModifiers::NONE,
+                    key: KeyCode::Char('n'),
+                },
+            ],
+            WindowUiEvent::NextTab,
+        ));
+        events.dispatch(RegisterKeybind::chord(
+            [
+                KeyBind {
+                    modifiers: KeyModifiers::CONTROL,
+                    key: KeyCode::Char('t'),
+                },
+                KeyBind {
+                    modifiers: KeyModifiers::NONE,
+                    key: KeyCode::Char('p'),
+                },
+            ],
+            WindowUiEvent::PreviousTab,
+        ));
+        events.dispatch(RegisterKeybind::chord(
+            [
+                KeyBind {
+                    modifiers: KeyModifiers::CONTROL,
+                    key: KeyCode::Char('t'),
+                },
+                KeyBind {
+                    modifiers: KeyModifiers::NONE,
+                    key: KeyCode::Char('c'),
+                },
+            ],
+            WindowUiEvent::CloseTab,
+        ));
 
         Ok(())
     }
 
     fn update(
         &mut self,
-        events: &mut crate::plugin_manager::EventManager,
-        plugins: &crate::plugin_manager::PluginStore,
-    ) -> color_eyre::eyre::Result<()> {
+        events: &mut arcane_core::EventManager,
+        plugins: &arcane_core::PluginStore,
+    ) -> Result<()> {
         let focused_window_id = self
-            .window_order
-            .get(self.focused)
+            .tabs
+            .get(self.focused_tab)
+            .and_then(|tab| tab.get(self.focused_window))
             .copied()
             .unwrap_or_default();
         for (window_id, window) in &mut self.windows {
@@ -243,14 +347,51 @@ impl Plugin for WindowPlugin {
         for event in reader.read::<WindowUiEvent>() {
             match event {
                 WindowUiEvent::FocusLeft => {
-                    self.focused = self.focused.saturating_sub(1);
+                    self.focused_window = self.focused_window.saturating_sub(1);
                 }
                 WindowUiEvent::FocusRight => {
-                    self.focused = self.focused.saturating_add(1);
+                    self.focused_window = self.focused_window.saturating_add(1);
                 }
                 WindowUiEvent::DeleteFocus => {
-                    if let Some(window_id) = self.window_order.get(self.focused) {
-                        writer.dispatch(WindowEvent::CloseWindow(*window_id));
+                    writer.dispatch(WindowEvent::CloseWindow(focused_window_id));
+                }
+                WindowUiEvent::MoveLeft => {
+                    let target = self.focused_window.saturating_sub(1);
+                    if let Some(current_tab) = self.tabs.get_mut(self.focused_tab) {
+                        if target < current_tab.len() {
+                            current_tab.swap(self.focused_window, target);
+                            self.focused_window = target;
+                        }
+                    }
+                }
+                WindowUiEvent::MoveRight => {
+                    let target = self.focused_window.saturating_add(1);
+                    if let Some(current_tab) = self.tabs.get_mut(self.focused_tab) {
+                        if target < current_tab.len() {
+                            current_tab.swap(self.focused_window, target);
+                            self.focused_window = target;
+                        }
+                    }
+                }
+                WindowUiEvent::NewTab => {
+                    self.tabs.push(vec![]);
+                    self.focused_tab = self.tabs.len().saturating_sub(1);
+                }
+                WindowUiEvent::NextTab => {
+                    self.focused_tab = self.focused_tab.saturating_add(1);
+                }
+                WindowUiEvent::PreviousTab => {
+                    self.focused_tab = self.focused_tab.saturating_sub(1);
+                }
+                WindowUiEvent::CloseTab => {
+                    if self.focused_tab < self.tabs.len() {
+                        let removed_tab = self.tabs.remove(self.focused_tab);
+                        for window_id in removed_tab {
+                            writer.dispatch(WindowEvent::CloseWindow(window_id));
+                        }
+                        if self.tabs.is_empty() {
+                            self.tabs.push(vec![]);
+                        }
                     }
                 }
             }
@@ -268,19 +409,27 @@ impl Plugin for WindowPlugin {
                         self.fill_gaps()?;
                     }
                     self.windows.insert(id, dyn_clone::clone_box(&**window));
-                    self.window_order.push(id);
-                    self.focused = self.window_order.len().saturating_sub(1);
+                    if let Some(current_tab) = self.tabs.get_mut(self.focused_tab) {
+                        current_tab.push(id);
+                        self.focused_window = current_tab.len().saturating_sub(1);
+                    }
                 }
                 WindowEvent::CloseWindow(id) => {
                     event!(Level::DEBUG, "Deleting window {id}");
                     if let Some(mut removed_window) = self.windows.remove(id) {
                         removed_window.on_remove(events, plugins)?;
                     }
-                    self.window_order.retain(|window_id| window_id != id);
+                    for tab in &mut self.tabs {
+                        tab.retain(|window_id| window_id != id);
+                    }
                 }
             }
         }
-        self.focused = self.focused.min(self.window_order.len().saturating_sub(1));
+
+        self.focused_tab = self.focused_tab.min(self.tabs.len().saturating_sub(1));
+        if let Some(current_tab) = self.tabs.get(self.focused_tab) {
+            self.focused_window = self.focused_window.min(current_tab.len().saturating_sub(1));
+        }
 
         Ok(())
     }
@@ -288,8 +437,8 @@ impl Plugin for WindowPlugin {
     fn draw(
         &self,
         frame: &mut ratatui::Frame,
-        area: ratatui::prelude::Rect,
-        plugins: &crate::plugin_manager::PluginStore,
+        mut area: ratatui::prelude::Rect,
+        plugins: &arcane_core::PluginStore,
     ) {
         if self.windows.is_empty() {
             let text = Paragraph::new("No Windows Open!").red();
@@ -297,26 +446,47 @@ impl Plugin for WindowPlugin {
             return;
         }
 
-        let Some(settings_ref) = get_settings::<WindowSettings>(plugins) else {
+        let Some(settings_ref) = arcane_settings::get_settings::<WindowSettings>(plugins) else {
             return;
         };
         let settings = settings_ref.clone();
         drop(settings_ref);
 
-        let windows = self
-            .window_order
+        let Some(current_tab) = self.tabs.get(self.focused_tab) else {
+            return;
+        };
+        let windows = current_tab
             .iter()
             .filter_map(|id| self.windows.get(id))
             .collect::<Vec<_>>();
+
+        if self.tabs.len() > 1 || settings.always_show_tab_bar {
+            let [tab_bar_area, new_area] =
+                Layout::vertical([Constraint::Length(1), Constraint::Fill(1)]).areas::<2>(area);
+            area = new_area;
+
+            let tab_bar = Tabs::new(self.tabs.iter().enumerate().map(|(index, tab)| {
+                format!(
+                    "{}{}",
+                    if index == self.focused_tab { "> " } else { "" },
+                    tab.len()
+                )
+            }))
+            .select(self.focused_tab)
+            .divider(" | ")
+            .highlight_style(Style::default().yellow())
+            .on_black();
+            frame.render_widget(tab_bar, tab_bar_area);
+        }
 
         let layout =
             Layout::horizontal(windows.iter().map(|window| window.horizontal_constraints()))
                 .split(area);
 
         for (position, window) in windows.into_iter().enumerate() {
-            let focused = position == self.focused;
+            let focused = position == self.focused_window;
 
-            let borders = if self.windows.len() == 1 {
+            let borders = if current_tab.len() == 1 {
                 Borders::NONE
             } else if settings.all_full_border {
                 Borders::ALL
@@ -326,7 +496,7 @@ impl Plugin for WindowPlugin {
                 } else {
                     Borders::LEFT | Borders::RIGHT
                 }
-            } else if position != 0 && position.saturating_sub(1) != self.focused {
+            } else if position != 0 && position.saturating_sub(1) != self.focused_window {
                 Borders::LEFT
             } else {
                 Borders::NONE
@@ -366,15 +536,15 @@ impl Plugin for WindowPlugin {
     }
 }
 
-#[coverage(off)]
 #[cfg(test)]
 #[allow(clippy::arithmetic_side_effects, clippy::disallowed_methods)]
 mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use super::{Window, WindowEvent, WindowPlugin};
-    use crate::plugin_manager::StateManager;
+    use arcane_core::{Plugin, StateManager};
+
+    use super::*;
 
     #[derive(Clone)]
     struct TestWindow {
@@ -386,11 +556,11 @@ mod tests {
         }
         fn update(
             &mut self,
-            _events: &mut super::EventManager,
-            _plugins: &super::PluginStore,
+            _events: &mut arcane_core::EventManager,
+            _plugins: &arcane_core::PluginStore,
             _focused: bool,
             _id: super::WindowID,
-        ) -> color_eyre::eyre::Result<()> {
+        ) -> Result<()> {
             *self.update_calls.borrow_mut() += 1;
             Ok(())
         }
@@ -398,7 +568,7 @@ mod tests {
             &self,
             _frame: &mut ratatui::Frame,
             _area: ratatui::prelude::Rect,
-            _plugins: &crate::plugin_manager::PluginStore,
+            _plugins: &arcane_core::PluginStore,
         ) {
             *self.update_calls.borrow_mut() += 1;
         }

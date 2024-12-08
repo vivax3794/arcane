@@ -1,14 +1,13 @@
 //! Plugin to show application FPS
 
+use arcane_core::{DeltaTimeEvent, EventManager, Plugin, PluginStore, Result};
+use arcane_keybindings::{BindResult, RegisterKeybind};
+use error_mancer::errors;
 use ratatui::layout::{Constraint, Layout};
+use ratatui::style::Stylize;
 use ratatui::text::ToLine;
 use ratatui::widgets::{Block, BorderType, Clear, Sparkline};
 use serde::{Deserialize, Serialize};
-
-use super::keybindings::BindResult;
-use crate::editor::DeltaTimeEvent;
-use crate::plugin_manager::{EventManager, Plugin, PluginStore};
-use crate::prelude::*;
 
 /// Toggle fps graph
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
@@ -32,9 +31,11 @@ pub struct FpsPlugin {
     show_fps: bool,
 }
 
-impl FpsPlugin {
+arcane_core::register_plugin!(FpsPlugin);
+
+impl Plugin for FpsPlugin {
     /// Create new one
-    pub(super) const fn new() -> Self {
+    fn new() -> Self {
         Self {
             fps: 0,
             fps_history: Vec::new(),
@@ -43,9 +44,7 @@ impl FpsPlugin {
             show_fps: false,
         }
     }
-}
 
-impl Plugin for FpsPlugin {
     #[errors]
     fn on_load(&mut self, events: &mut EventManager) -> Result<()> {
         events.ensure_event::<ToggleFps>();

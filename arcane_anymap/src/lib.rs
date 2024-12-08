@@ -2,10 +2,14 @@
 //!
 //! NOTE: this is not near a complete implementation and only implements the methods needed by this
 //! application. As such I will only add methods that I need.
+#![feature(map_try_insert)]
+#![feature(trait_upcasting)]
 
 use std::any::{Any, TypeId};
 use std::collections::{hash_map, HashMap};
 use std::marker::PhantomData;
+
+pub use dyn_clone;
 
 /// Helper trait to convert a value into a Boxed version.
 ///
@@ -15,7 +19,7 @@ use std::marker::PhantomData;
 /// ```rs
 /// impl<T: Any> IntoBoxed<dyn Any> for T { ... }
 /// ```
-pub(crate) trait IntoBoxed<A: ?Sized> {
+pub trait IntoBoxed<A: ?Sized> {
     /// Convert the value into a boxed version
     fn into(self) -> Box<A>;
 }
@@ -27,7 +31,7 @@ impl<T: Any> IntoBoxed<dyn Any> for T {
 }
 
 /// Downcast the value to the specific type
-pub(crate) trait Downcast {
+pub trait Downcast {
     /// Downcast a immutable reference
     fn downcast<T>(this: &Self) -> Option<&T>
     where
@@ -54,31 +58,36 @@ impl Downcast for dyn Any {
 }
 
 /// A map that can hold any type and also can take custom trait bounds.
-#[derive(Debug)]
-pub(crate) struct AnyMap<A: Downcast + ?Sized = dyn Any>(HashMap<TypeId, Box<A>>);
+#[derive(Debug, Default)]
+pub struct AnyMap<A: Downcast + ?Sized = dyn Any>(HashMap<TypeId, Box<A>>);
 
 impl<A: Any + Downcast + ?Sized> AnyMap<A>
 where
     A: 'static,
 {
     /// Create a new empty map
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self(HashMap::new())
     }
 
     /// How long is the map
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.0.len()
     }
 
+    /// Is the hashmap empty
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     /// Insert a value into the map
-    pub(crate) fn insert<T: IntoBoxed<A> + 'static>(&mut self, value: T) {
+    pub fn insert<T: IntoBoxed<A> + 'static>(&mut self, value: T) {
         self.0.insert(TypeId::of::<T>(), value.into());
     }
 
     /// Get a value from the map
     #[allow(clippy::expect_used)]
-    pub(crate) fn get<T: IntoBoxed<A> + 'static>(&self) -> Option<&T> {
+    pub fn get<T: 'static>(&self) -> Option<&T> {
         let any = self.0.get(&TypeId::of::<T>())?;
         Some(A::downcast(any).expect("AnyMap corrupted"))
     }
@@ -89,12 +98,12 @@ where
     /// - **Do not** use this mutable reference to change the concrete type of the value.
     /// - **Only** modify attributes or call methods on the inner type `A`.
     /// - Changing the concrete type will lead to panics and undefined behavior.
-    pub(crate) fn get_mut_raw(&mut self, id: &TypeId) -> Option<&mut Box<A>> {
+    pub fn get_mut_raw(&mut self, id: &TypeId) -> Option<&mut Box<A>> {
         self.0.get_mut(id)
     }
 
     /// Get a entry from the map for in place operations
-    pub(crate) fn entry<T: IntoBoxed<A> + 'static>(&mut self) -> Entry<A, T> {
+    pub fn entry<T: IntoBoxed<A> + 'static>(&mut self) -> Entry<A, T> {
         let entry = self.0.entry(TypeId::of::<T>());
         Entry {
             entry,
@@ -103,17 +112,17 @@ where
     }
 
     /// Iterate over the mutable references to the values
-    pub(crate) fn iter_mut(&mut self) -> hash_map::ValuesMut<TypeId, Box<A>> {
+    pub fn iter_mut(&mut self) -> hash_map::ValuesMut<TypeId, Box<A>> {
         self.0.values_mut()
     }
 
     /// Iterate over immutable references to the values
-    pub(crate) fn iter(&self) -> hash_map::Values<TypeId, Box<A>> {
+    pub fn iter(&self) -> hash_map::Values<TypeId, Box<A>> {
         self.0.values()
     }
 
     /// Insert Raw
-    pub(crate) fn insert_raw(&mut self, value: Box<A>)
+    pub fn insert_raw(&mut self, value: Box<A>)
     where
         A: Any,
     {
@@ -122,7 +131,7 @@ where
     }
 
     /// Insert Raw, but only insert if the key doesnt exsist
-    pub(crate) fn insert_raw_if_missing(&mut self, value: Box<A>)
+    pub fn insert_raw_if_missing(&mut self, value: Box<A>)
     where
         A: Any,
     {
@@ -132,7 +141,7 @@ where
 }
 
 /// A entry in the map
-pub(crate) struct Entry<'h, A: Downcast + ?Sized, T> {
+pub struct Entry<'h, A: Downcast + ?Sized, T> {
     /// The actual hashmap entry
     entry: hash_map::Entry<'h, TypeId, Box<A>>,
     /// The type the data can be cast to
@@ -142,7 +151,7 @@ pub(crate) struct Entry<'h, A: Downcast + ?Sized, T> {
 impl<'h, A: Downcast + ?Sized, T> Entry<'h, A, T> {
     /// Insert the default value if empty and return a mutable reference
     #[allow(clippy::expect_used)]
-    pub(crate) fn or_default(self) -> &'h mut T
+    pub fn or_default(self) -> &'h mut T
     where
         T: Default + IntoBoxed<A> + 'static,
     {
@@ -151,7 +160,6 @@ impl<'h, A: Downcast + ?Sized, T> Entry<'h, A, T> {
     }
 }
 
-#[coverage(off)]
 #[cfg(test)]
 mod tests {
     use std::any::{Any, TypeId};
@@ -292,7 +300,7 @@ mod tests {
     mod non_any {
         use std::any::{Any, TypeId};
 
-        use crate::anymap::{AnyMap, Downcast, IntoBoxed};
+        use crate::{AnyMap, Downcast, IntoBoxed};
 
         trait TestTrait: Any {
             fn ref_method(&self) -> i32;

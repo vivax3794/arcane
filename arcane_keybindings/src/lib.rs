@@ -1,27 +1,20 @@
 //! Handles abstracting actions into keybindings
+#![feature(iter_intersperse)]
+#![feature(trait_upcasting)]
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fs::create_dir_all;
 
-use crossterm::event::{KeyCode, KeyModifiers, ModifierKeyCode};
+use arcane_anymap::dyn_clone;
+use arcane_core::{event, Level, Result};
+pub use crossterm::event::{KeyCode, KeyModifiers, ModifierKeyCode};
 use derive_more::derive::Debug;
-use dyn_clone::DynClone;
-use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization};
-use nucleo_matcher::{Matcher, Utf32Str};
+use error_mancer::errors;
 use ouroboros::self_referencing;
-use ratatui::layout::{Constraint, Layout};
-use ratatui::style::{Color, Stylize};
-use ratatui::text::Line;
-use ratatui::widgets::{Row, Table};
 use serde::{Deserialize, Serialize};
 use trie_rs::inc_search::{Answer, IncSearch};
 use trie_rs::map::{Trie, TrieBuilder};
-
-use crate::editor::{DeltaTimeEvent, KeydownEvent};
-use crate::plugin_manager::{Plugin, RawEvent};
-use crate::prelude::*;
-use crate::project_dirs;
 
 /// A keybind that can be matched against
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
@@ -34,7 +27,7 @@ pub struct KeyBind {
 
 impl KeyBind {
     /// Checks if the keybind is only a modifier key being pressed
-    const fn is_only_modifiers(&self) -> bool {
+    pub const fn is_only_modifiers(&self) -> bool {
         matches!(
             (self.modifiers, &self.key),
             (
@@ -78,7 +71,7 @@ impl Ord for KeyBind {
 
 impl KeyBind {
     /// Get a string version of the keybind
-    fn render(&self) -> String {
+    pub fn render(&self) -> String {
         if self.modifiers.is_empty() {
             format!("{}", self.key)
         } else {
@@ -96,7 +89,7 @@ pub struct Chord {
 
 impl Chord {
     /// Render a human readable version of the binding
-    fn render(&self) -> String {
+    pub fn render(&self) -> String {
         self.keys
             .iter()
             .map(KeyBind::render)
@@ -107,10 +100,10 @@ impl Chord {
 
 /// Trait that implements everything a event needs to be dispatched by the keybinding system
 #[typetag::serde(tag = "event", content = "data")]
-pub trait BindResult: RawEvent + DynClone + std::fmt::Debug {}
+pub trait BindResult: arcane_core::RawEvent + dyn_clone::DynClone + std::fmt::Debug {}
 
 /// How is a keybinding event stored
-type KeyBindEvent = Box<dyn BindResult>;
+pub type KeyBindEvent = Box<dyn BindResult>;
 
 /// Set the keybind
 pub struct RegisterKeybind {
@@ -120,8 +113,13 @@ pub struct RegisterKeybind {
     pub event: KeyBindEvent,
 }
 
-/// Delete a keybind
-struct DeleteKeybind(Chord);
+/// Rebind a Keybind
+pub struct RebindKeybind {
+    /// The actual keybind
+    pub bind: Chord,
+    /// The event to dispatch on this event
+    pub event: String,
+}
 
 impl RegisterKeybind {
     /// Shortcut for a keybiding with a single key
@@ -154,21 +152,24 @@ impl RegisterKeybind {
 /// This holds a immutable trie tree, and a mutable incremental search of it
 #[self_referencing]
 struct TrieHolder {
-    bindings_tree: Trie<KeyBind, KeyBindEvent>,
+    bindings_tree: Trie<KeyBind, Vec<KeyBindEvent>>,
     #[borrows(bindings_tree)]
     #[covariant]
-    search: IncSearch<'this, KeyBind, KeyBindEvent>,
+    search: IncSearch<'this, KeyBind, Vec<KeyBindEvent>>,
 }
 
 impl TrieHolder {
     /// Create the trie tree from the hashmap
-    fn from_raw(raw: &HashMap<Chord, KeyBindEvent>) -> Self {
+    fn from_raw(raw: &HashMap<Chord, Vec<KeyBindEvent>>) -> Self {
         let mut builder = TrieBuilder::new();
         for (chord, event) in raw {
             if chord.keys.is_empty() {
                 continue;
             }
-            builder.push(chord.keys.clone(), dyn_clone::clone_box(&**event));
+            builder.push(
+                chord.keys.clone(),
+                event.iter().map(|e| dyn_clone::clone_box(&**e)).collect(),
+            );
         }
 
         TrieHolderBuilder {
@@ -184,7 +185,7 @@ impl TrieHolder {
     }
 
     /// Get the current match when there is some
-    fn get_match(&mut self) -> Option<&KeyBindEvent> {
+    fn get_match(&mut self) -> Option<&Vec<KeyBindEvent>> {
         self.with_search_mut(|search| search.value())
     }
 
@@ -199,12 +200,14 @@ impl TrieHolder {
 /// Handles keybindings
 pub struct KeybindPlugin {
     /// Holds the bindings, the key is a combimation of the owning plugin and the name
-    raw_bindings: HashMap<Chord, KeyBindEvent>,
+    pub raw_bindings: HashMap<Chord, Vec<KeyBindEvent>>,
     /// The trie tree
     trie: TrieHolder,
     /// Should keybindings be emmitted
-    enabled: bool,
+    pub enabled: bool,
 }
+
+arcane_core::register_plugin!(KeybindPlugin);
 
 /// Generic events to move around a menu
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -233,31 +236,21 @@ pub enum MenuEvent {
 #[typetag::serde]
 impl BindResult for MenuEvent {}
 
-/// Open the keybinding menu
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct OpenKeybindings;
-
-#[typetag::serde]
-impl BindResult for OpenKeybindings {}
-
 /// Disable or Enable keybindings
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct LockKeybindings(bool);
+pub struct LockKeybindings(pub bool);
 
-impl KeybindPlugin {
-    /// Create a empty plugin
-    pub(super) fn new() -> Self {
+impl arcane_core::Plugin for KeybindPlugin {
+    fn new() -> Self {
         Self {
             raw_bindings: HashMap::new(),
             trie: TrieHolder::from_raw(&HashMap::new()),
             enabled: true,
         }
     }
-}
 
-impl Plugin for KeybindPlugin {
     #[errors(serde_json::Error)]
-    fn on_load(&mut self, events: &mut EventManager) -> Result<()> {
+    fn on_load(&mut self, events: &mut arcane_core::EventManager) -> Result<()> {
         events.ensure_event::<MenuEvent>();
         events.dispatch(RegisterKeybind::single_key(
             KeyBind {
@@ -302,28 +295,20 @@ impl Plugin for KeybindPlugin {
             MenuEvent::AltSelect,
         ));
 
-        events.ensure_event::<OpenKeybindings>();
-        events.dispatch(RegisterKeybind::chord(
-            [
-                KeyBind {
-                    modifiers: KeyModifiers::CONTROL,
-                    key: KeyCode::Char('p'),
-                },
-                KeyBind {
-                    modifiers: KeyModifiers::CONTROL,
-                    key: KeyCode::Char('k'),
-                },
-            ],
-            OpenKeybindings,
-        ));
-
-        if let Some(project_directory) = project_dirs() {
+        if let Some(project_directory) = arcane_core::project_dirs() {
             let config_path = project_directory.config_dir().join("keybinds.json");
             if let Ok(file) = std::fs::File::open(&config_path) {
-                let data: Vec<(Chord, KeyBindEvent)> = serde_json::from_reader(file)?;
-                event!(Level::DEBUG, "Loaded {} keybinds", data.len());
-                event!(Level::DEBUG, "Data: {:?}", data);
-                self.raw_bindings = data.into_iter().collect();
+                let data: Vec<(Chord, serde_json::Value)> = serde_json::from_reader(file)?;
+                event!(Level::DEBUG, "loading {} keybinds", data.len());
+                let data = data.into_iter().filter_map(|(chord, action)| {
+                    let action = serde_json::from_value(action).ok();
+                    if action.is_none() {
+                        event!(Level::ERROR, "Invalid action in keybindings file!");
+                    }
+                    action.map(|action| (chord, action))
+                });
+                self.raw_bindings = data.collect();
+                event!(Level::DEBUG, "Loaded {} keybinds", self.raw_bindings.len());
                 self.trie = TrieHolder::from_raw(&self.raw_bindings);
             }
         }
@@ -334,34 +319,60 @@ impl Plugin for KeybindPlugin {
     #[errors(std::io::Error, serde_json::Error)]
     fn update(
         &mut self,
-        events: &mut crate::plugin_manager::EventManager,
-        _plugins: &crate::plugin_manager::PluginStore,
-    ) -> color_eyre::eyre::Result<()> {
+        events: &mut arcane_core::EventManager,
+        _plugins: &arcane_core::PluginStore,
+    ) -> Result<()> {
         let mut bindings_modified = false;
         // Very important to remove first
-        for event in events.read::<DeleteKeybind>() {
-            self.raw_bindings.remove(&event.0);
-            bindings_modified = true;
-        }
         for event in events.read::<RegisterKeybind>() {
             if self
                 .raw_bindings
                 .iter()
-                .any(|(_, action)| format!("{action:?}") == format!("{:?}", event.event))
+                .flat_map(|(_, actions)| actions.iter())
+                .any(|action| format!("{action:?}") == format!("{:?}", event.event))
             {
                 event!(Level::TRACE, "Keybind {:?} already exists", event.event);
             } else {
                 event!(Level::DEBUG, "Registering keybind: {}", event.bind.render());
+                let action = dyn_clone::clone_box(&*event.event);
                 self.raw_bindings
-                    .insert(event.bind.clone(), dyn_clone::clone_box(&*event.event));
+                    .entry(event.bind.clone())
+                    .or_default()
+                    .push(action);
                 bindings_modified = true;
+            }
+        }
+        for event in events.read::<RebindKeybind>() {
+            event!(
+                Level::DEBUG,
+                "Rebinding keybind: {} to {}",
+                event.event,
+                event.bind.render()
+            );
+
+            let action = self.raw_bindings.values_mut().find_map(|actions| {
+                let index = actions
+                    .iter()
+                    .position(|action| format!("{action:?}") == event.event)?;
+                Some(actions.remove(index))
+            });
+
+            if let Some(action) = action {
+                self.raw_bindings
+                    .entry(event.bind.clone())
+                    .or_default()
+                    .push(action);
+                bindings_modified = true;
+            } else {
+                event!(Level::ERROR, "Keybind not found");
             }
         }
 
         if bindings_modified {
+            self.raw_bindings.retain(|_, actions| !actions.is_empty());
             self.trie = TrieHolder::from_raw(&self.raw_bindings);
 
-            if let Some(project_directory) = project_dirs() {
+            if let Some(project_directory) = arcane_core::project_dirs() {
                 let config_dir = project_directory.config_dir();
                 create_dir_all(config_dir)?;
 
@@ -379,7 +390,7 @@ impl Plugin for KeybindPlugin {
 
         let (reader, mut writer) = events.split();
         if self.enabled {
-            for event in reader.read::<KeydownEvent>() {
+            for event in reader.read::<arcane_core::KeydownEvent>() {
                 let keybind = KeyBind {
                     modifiers: event.0.modifiers,
                     key: event.0.code,
@@ -387,255 +398,65 @@ impl Plugin for KeybindPlugin {
                 if keybind.is_only_modifiers() {
                     continue;
                 }
-                match self.trie.search(&keybind) {
-                    None => {
-                        event!(Level::TRACE, "No match for {keybind:?}");
-                        if let Some(event) = self.trie.get_match() {
-                            event!(Level::DEBUG, "Emitting {event:?}");
-                            let event = dyn_clone::clone_box(&**event);
-                            writer.dispatch_raw(event as Box<dyn RawEvent>);
+
+                loop {
+                    event!(Level::TRACE, "Chekcing: {}", keybind.render());
+                    let depth = self.trie.borrow_search().prefix_len();
+                    event!(Level::TRACE, "Current Search depth: {}", depth);
+                    match self.trie.search(&keybind) {
+                        None => {
+                            event!(Level::TRACE, "No match for {}", keybind.render());
+                            if let Some(events) = self.trie.get_match() {
+                                for event in events {
+                                    event!(Level::DEBUG, "Emitting {event:?}");
+                                    let event = dyn_clone::clone_box(&**event);
+                                    writer.dispatch_raw(event as Box<dyn arcane_core::RawEvent>);
+                                }
+                            }
+
+                            event!(Level::TRACE, "Clearing search");
+                            self.trie.clear();
+
+                            if depth > 0 {
+                                event!(Level::TRACE, "non-root mismatch, retrying at root");
+                                continue;
+                            } else {
+                                break;
+                            }
                         }
-                        self.trie.clear();
-                    }
-                    Some(Answer::Match) => {
-                        event!(Level::DEBUG, "Match for {keybind:?}");
-                        if let Some(event) = self.trie.get_match() {
-                            event!(Level::DEBUG, "Emitting {event:?}");
-                            let event = dyn_clone::clone_box(&**event);
-                            writer.dispatch_raw(event as Box<dyn RawEvent>);
+                        Some(Answer::Match) => {
+                            event!(Level::TRACE, "Match for {}", keybind.render());
+                            if let Some(events) = self.trie.get_match() {
+                                for event in events {
+                                    event!(Level::DEBUG, "Emitting {event:?}");
+                                    let event = dyn_clone::clone_box(&**event);
+                                    writer.dispatch_raw(event as Box<dyn arcane_core::RawEvent>);
+                                }
+                            }
+
+                            event!(Level::TRACE, "Clearing search");
+                            self.trie.clear();
+                            break;
                         }
-                        self.trie.clear();
-                    }
-                    Some(Answer::Prefix | Answer::PrefixAndMatch) => {
-                        event!(Level::DEBUG, "Prefix match for {keybind:?}");
+                        Some(Answer::Prefix | Answer::PrefixAndMatch) => {
+                            event!(Level::TRACE, "Prefix match for {}", keybind.render());
+                            break;
+                        }
                     }
                 }
             }
-        }
-        for _ in reader.read::<OpenKeybindings>() {
-            writer.dispatch(WindowEvent::CreateWindow(
-                Box::new(KeybindWindow::default()),
-            ));
         }
 
         Ok(())
     }
 }
 
-/// The key sequence to mark the end of a key chord
-const CHORD_END: KeyBind = KeyBind {
-    modifiers: KeyModifiers::CONTROL,
-    key: KeyCode::Esc,
-};
-
-/// A window to see and configure keybindings
-#[derive(Clone, Default)]
-struct KeybindWindow {
-    /// The keys visible in the window
-    visible_keys: Vec<(String, String, usize)>,
-    /// The fuzzy matcher
-    fuzzy_matcher: Matcher,
-    /// The search bar input
-    search: String,
-    /// The focused element
-    focused_element: usize,
-    /// Element is selected
-    element_selected: bool,
-    /// The timer for when to blink the cursor
-    cursor_blink: f32,
-    /// The currently being recorded keybind
-    recording: Vec<KeyBind>,
-}
-
-impl Window for KeybindWindow {
-    fn name(&self) -> String {
-        String::from("Keybinds")
-    }
-
-    #[errors()]
-    fn update(
-        &mut self,
-        events: &mut EventManager,
-        plugins: &PluginStore,
-        focused: bool,
-        _id: super::windows::WindowID,
-    ) -> Result<()> {
-        let Some(keybinds) = plugins.get::<KeybindPlugin>() else {
-            return Ok(());
-        };
-
-        if focused {
-            let (reader, mut writer) = events.split();
-            for event in reader.read::<MenuEvent>() {
-                match event {
-                    MenuEvent::Select => {
-                        if self.focused_element == 0 {
-                            self.element_selected = !self.element_selected;
-                        } else if !self.element_selected {
-                            self.element_selected = true;
-                            writer.dispatch(LockKeybindings(true));
-                        }
-                    }
-                    MenuEvent::Down if !self.element_selected => {
-                        self.focused_element = self.focused_element.saturating_add(1);
-                    }
-                    MenuEvent::Up if !self.element_selected => {
-                        self.focused_element = self.focused_element.saturating_sub(1);
-                    }
-                    _ => (),
-                }
-            }
-
-            if self.focused_element != 0 && self.element_selected {
-                let (reader, mut writer) = events.split();
-                for event in reader.read::<KeydownEvent>() {
-                    let keybind = KeyBind {
-                        modifiers: event.0.modifiers,
-                        key: event.0.code,
-                    };
-                    if keybind.is_only_modifiers() {
-                        continue;
-                    }
-                    if keybind == CHORD_END {
-                        let chord = Chord {
-                            keys: std::mem::take(&mut self.recording).into_boxed_slice(),
-                        };
-
-                        let keybind_index = self
-                            .visible_keys
-                            .get(self.focused_element.saturating_sub(1))
-                            .map(|(_, _, i)| *i)
-                            .unwrap_or_default();
-                        if let Some((current_chord, action)) =
-                            keybinds.raw_bindings.iter().nth(keybind_index)
-                        {
-                            writer.dispatch(DeleteKeybind(current_chord.clone()));
-                            writer.dispatch(RegisterKeybind {
-                                bind: chord,
-                                event: dyn_clone::clone_box(&**action),
-                            });
-                            writer.dispatch(LockKeybindings(false));
-                            self.element_selected = false;
-                        };
-                    } else {
-                        self.recording.push(keybind);
-                    }
-                }
-            }
-
-            if self.focused_element == 0 && self.element_selected {
-                for event in events.read::<KeydownEvent>() {
-                    match event.0.code {
-                        KeyCode::Char(c) => {
-                            self.search.push(c);
-                        }
-                        KeyCode::Backspace => {
-                            self.search.pop();
-                        }
-                        _ => {}
-                    }
-                }
-
-                for event in events.read::<DeltaTimeEvent>() {
-                    self.cursor_blink += event.0.as_secs_f32();
-                    self.cursor_blink %= 1.0;
-                }
-            }
-        }
-
-        let mut rows = keybinds
-            .raw_bindings
-            .iter()
-            .enumerate()
-            .map(|(i, (key, action))| (key.render(), format!("{action:?}"), i))
-            .collect::<Vec<_>>();
-
-        if self.search.is_empty() {
-            rows.sort_by(|(_, a1, _), (_, a2, _)| a1.cmp(a2));
-        } else {
-            let pattern = nucleo_matcher::pattern::Pattern::new(
-                &self.search,
-                CaseMatching::Smart,
-                Normalization::Smart,
-                AtomKind::Fuzzy,
-            );
-            let mut what_is_this_for = Vec::new();
-            rows.sort_by_key(|(_, value, _)| {
-                pattern.score(
-                    Utf32Str::new(value, &mut what_is_this_for),
-                    &mut self.fuzzy_matcher,
-                )
-            });
-            rows.reverse();
-        }
-        self.visible_keys = rows;
-
-        Ok(())
-    }
-
-    fn draw(
-        &self,
-        frame: &mut ratatui::Frame,
-        area: ratatui::prelude::Rect,
-        _plugins: &crate::plugin_manager::PluginStore,
-    ) {
-        let area = Layout::vertical([Constraint::Length(1), Constraint::Fill(1)]).areas::<2>(area);
-
-        let cursor =
-            if self.focused_element == 0 && self.element_selected && self.cursor_blink > 0.5 {
-                Color::White
-            } else {
-                Color::Black
-            };
-        let background = if self.focused_element == 0 && self.element_selected {
-            Color::DarkGray
-        } else if self.focused_element == 0 {
-            Color::Black
-        } else {
-            Color::Rgb(20, 20, 40)
-        };
-        let text = Line::from(vec![self.search.clone().into(), "_".fg(cursor)]).bg(background);
-        frame.render_widget(text, area[0]);
-
-        let rows = self
-            .visible_keys
-            .iter()
-            .enumerate()
-            .map(|(i, (key, action, _))| {
-                let background =
-                    if i.saturating_add(1) == self.focused_element && self.element_selected {
-                        Color::DarkGray
-                    } else if i.saturating_add(1) == self.focused_element {
-                        Color::Black
-                    } else {
-                        Color::Reset
-                    };
-                let key = if self.element_selected && i.saturating_add(1) == self.focused_element {
-                    self.recording
-                        .iter()
-                        .map(KeyBind::render)
-                        .intersperse(" ".into())
-                        .collect::<String>()
-                } else {
-                    key.clone()
-                };
-                Row::new([key, action.clone()]).bg(background)
-            });
-
-        let table = Table::new(rows, [Constraint::Fill(1), Constraint::Fill(1)]);
-        frame.render_widget(table, area[1]);
-    }
-}
-
-#[coverage(off)]
 #[cfg(test)]
 mod tests {
+    use arcane_core::{KeydownEvent, Plugin, StateManager};
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 
     use super::{BindResult, Deserialize, KeybindPlugin, RegisterKeybind, Serialize};
-    use crate::plugin_loading::keybindings::{Chord, DeleteKeybind};
-    use crate::plugin_manager::StateManager;
-    use crate::KeydownEvent;
 
     #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
     enum TestEvent {
@@ -974,27 +795,30 @@ mod tests {
     }
 
     #[test]
-    fn delete_key() {
+    fn chord_interrupted_by_single_match() {
         let mut state = StateManager::new();
         state.plugins.insert(KeybindPlugin::new());
         state.events.ensure_event::<TestEvent>();
+        state.events.dispatch(RegisterKeybind::chord(
+            [
+                super::KeyBind {
+                    modifiers: KeyModifiers::NONE,
+                    key: KeyCode::Up,
+                },
+                super::KeyBind {
+                    modifiers: KeyModifiers::NONE,
+                    key: KeyCode::Down,
+                },
+            ],
+            TestEvent::Bar,
+        ));
         state.events.dispatch(RegisterKeybind::single_key(
             super::KeyBind {
                 modifiers: KeyModifiers::NONE,
-                key: KeyCode::Up,
+                key: KeyCode::Left,
             },
             TestEvent::Foo,
         ));
-
-        state.events.swap_buffers();
-        state.update().unwrap();
-
-        state.events.dispatch(DeleteKeybind(Chord {
-            keys: Box::new([super::KeyBind {
-                modifiers: KeyModifiers::NONE,
-                key: KeyCode::Up,
-            }]),
-        }));
         state.events.swap_buffers();
         state.update().unwrap();
 
@@ -1006,8 +830,126 @@ mod tests {
         }));
         state.events.swap_buffers();
         state.update().unwrap();
-
         state.events.swap_buffers();
-        assert_eq!(state.events.read::<TestEvent>(), &[]);
+
+        state.events.dispatch(KeydownEvent(KeyEvent {
+            modifiers: KeyModifiers::NONE,
+            code: KeyCode::Left,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }));
+        state.events.swap_buffers();
+        state.update().unwrap();
+        state.events.swap_buffers();
+        assert_eq!(state.events.read::<TestEvent>(), &[TestEvent::Foo]);
+    }
+
+    #[test]
+    fn chord_interrupted_by_new_chord_match() {
+        let mut state = StateManager::new();
+        state.plugins.insert(KeybindPlugin::new());
+        state.events.ensure_event::<TestEvent>();
+        state.events.dispatch(RegisterKeybind::chord(
+            [
+                super::KeyBind {
+                    modifiers: KeyModifiers::NONE,
+                    key: KeyCode::Up,
+                },
+                super::KeyBind {
+                    modifiers: KeyModifiers::NONE,
+                    key: KeyCode::Down,
+                },
+            ],
+            TestEvent::Bar,
+        ));
+        state.events.dispatch(RegisterKeybind::chord(
+            [
+                super::KeyBind {
+                    modifiers: KeyModifiers::NONE,
+                    key: KeyCode::Left,
+                },
+                super::KeyBind {
+                    modifiers: KeyModifiers::NONE,
+                    key: KeyCode::Right,
+                },
+            ],
+            TestEvent::Foo,
+        ));
+        state.events.swap_buffers();
+        state.update().unwrap();
+
+        state.events.dispatch(KeydownEvent(KeyEvent {
+            modifiers: KeyModifiers::NONE,
+            code: KeyCode::Up,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }));
+        state.events.swap_buffers();
+        state.update().unwrap();
+        state.events.swap_buffers();
+
+        state.events.dispatch(KeydownEvent(KeyEvent {
+            modifiers: KeyModifiers::NONE,
+            code: KeyCode::Left,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }));
+        state.events.swap_buffers();
+        state.update().unwrap();
+        state.events.swap_buffers();
+
+        state.events.dispatch(KeydownEvent(KeyEvent {
+            modifiers: KeyModifiers::NONE,
+            code: KeyCode::Right,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }));
+        state.events.swap_buffers();
+        state.update().unwrap();
+        state.events.swap_buffers();
+        assert_eq!(state.events.read::<TestEvent>(), &[TestEvent::Foo]);
+    }
+
+    #[test]
+    fn chord_duplicate_keys() {
+        let mut state = StateManager::new();
+        state.plugins.insert(KeybindPlugin::new());
+        state.events.ensure_event::<TestEvent>();
+        state.events.dispatch(RegisterKeybind::chord(
+            [
+                super::KeyBind {
+                    modifiers: KeyModifiers::NONE,
+                    key: KeyCode::Up,
+                },
+                super::KeyBind {
+                    modifiers: KeyModifiers::NONE,
+                    key: KeyCode::Up,
+                },
+            ],
+            TestEvent::Bar,
+        ));
+        state.events.swap_buffers();
+        state.update().unwrap();
+
+        state.events.dispatch(KeydownEvent(KeyEvent {
+            modifiers: KeyModifiers::NONE,
+            code: KeyCode::Up,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }));
+        state.events.swap_buffers();
+        state.update().unwrap();
+        state.events.swap_buffers();
+
+        state.events.dispatch(KeydownEvent(KeyEvent {
+            modifiers: KeyModifiers::NONE,
+            code: KeyCode::Up,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }));
+        state.events.swap_buffers();
+        state.update().unwrap();
+        state.events.swap_buffers();
+        assert_eq!(state.events.read::<TestEvent>(), &[TestEvent::Bar]);
     }
 }

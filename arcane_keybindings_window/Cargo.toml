@@ -1,0 +1,17 @@
+[package]
+name = "arcane_keybindings_window"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+error_mancer = "0.4"
+arcane_core = { path = "../arcane_core" }
+arcane_keybindings = { path = "../arcane_keybindings" }
+arcane_windows = { path = "../arcane_windows" }
+
+ratatui = {version="0.29"}
+
+nucleo-matcher = "0.3"
+
+serde = {version="1", features=["derive"]}
+typetag = "0.2"

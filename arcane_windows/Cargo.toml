@@ -1,0 +1,17 @@
+[package]
+name = "arcane_windows"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+arcane_core = { path = "../arcane_core" }
+arcane_anymap = { path = "../arcane_anymap" }
+arcane_keybindings = { path = "../arcane_keybindings" }
+arcane_settings = { path = "../arcane_settings" }
+
+ratatui = {version="0.29"}
+derive_more = {version="1", features=["debug"]}
+
+serde = {version="1", features=["derive"]}
+typetag = "0.2"
+

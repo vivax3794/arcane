@@ -37,68 +37,34 @@
     clippy::arithmetic_side_effects,
     unsafe_code
 )]
-#![feature(trait_upcasting)]
-#![feature(coverage_attribute)]
 #![feature(iter_intersperse)]
-#![feature(map_try_insert)]
+#![feature(trait_upcasting)]
 
-mod anymap;
 mod app;
 pub mod editor;
 mod logging;
-mod plugin_loading;
-pub mod plugin_manager;
 
-/// Contains common macros for logging and simiar
-#[allow(unused_imports)]
-mod prelude {
-    pub use color_eyre::eyre::eyre;
-    pub use color_eyre::Result;
-    pub use error_mancer::prelude::*;
-    pub use ratatui::style::Stylize;
-    pub use tracing::{event, instrument, span, Level};
-
-    pub use crate::editor::KeydownEvent;
-    pub use crate::plugin_loading::keybindings::{KeyBind, KeybindPlugin, RegisterKeybind};
-    pub use crate::plugin_loading::windows::{Window, WindowEvent};
-    pub use crate::plugin_manager::{EventManager, Plugin, PluginStore};
-}
+use arcane_core::Result;
 use crossterm::event::{
     KeyboardEnhancementFlags,
     PopKeyboardEnhancementFlags,
     PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
-use directories::ProjectDirs;
-use logging::Logger;
-use prelude::*;
 
-/// Get a struct that can be used to get the project directories to use
-///
-/// # Errors
-/// If missing envs
-pub fn project_dirs() -> Option<ProjectDirs> {
-    let result = ProjectDirs::from("dev", "viv", "arcane");
-    if result.is_none() {
-        event!(
-            Level::ERROR,
-            "Project Directories not found, config and similar will not be saved."
-        );
-    }
-    result
-}
+include!(concat!(env!("OUT_DIR"), "/auto_load.rs"));
 
 fn main() -> Result<()> {
-    let logs = logging::setup()?;
+    let _logs = logging::setup()?;
 
-    let result = start_application(logs);
+    let result = start_application();
     ratatui::restore();
 
     result
 }
 
 /// Create terminal and start the app
-fn start_application(logs: Logger) -> Result<()> {
+fn start_application() -> Result<()> {
     let mut terminal = ratatui::init();
     execute!(
         terminal.backend_mut(),
@@ -108,7 +74,7 @@ fn start_application(logs: Logger) -> Result<()> {
         )
     )
     .unwrap();
-    app::App::new(logs).run(&mut terminal)?;
+    app::App::new().run(&mut terminal)?;
     execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags).unwrap();
 
     Ok(())

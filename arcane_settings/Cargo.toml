@@ -1,0 +1,14 @@
+[package]
+name = "arcane_settings"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+arcane_core = { path = "../arcane_core" }
+arcane_anymap = { path = "../arcane_anymap" }
+
+error_mancer = "0.4"
+
+serde = {version="1", features=["derive"]}
+serde_json = "1"
+typetag = "0.2"

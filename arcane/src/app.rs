@@ -1,14 +1,16 @@
 //! Holds root applications logic
 
+use std::time::Duration;
+
 use ansi_to_tui::IntoText;
+use arcane_core::{event, Level, Result};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Layout};
+use ratatui::style::Stylize;
 use ratatui::symbols::border;
 use ratatui::widgets::{Block, Clear, Padding, Paragraph};
 
 use crate::editor::Editor;
-use crate::logging::Logger;
-use crate::prelude::*;
 
 /// The root app
 pub(crate) struct App {
@@ -22,9 +24,9 @@ pub(crate) struct App {
 
 impl App {
     /// Create new default app
-    pub(crate) fn new(logs: Logger) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            editor: Editor::new(logs),
+            editor: Editor::new(),
             exit_application: false,
             error_popup: None,
         }
@@ -63,7 +65,7 @@ impl App {
 
     /// Handle input for the application
     fn read_events(&mut self) -> Result<()> {
-        if crossterm::event::poll(self.editor.event_poll_rate())? {
+        if crossterm::event::poll(Duration::from_millis(10))? {
             if let Event::Key(key) = crossterm::event::read()? {
                 if key.kind == KeyEventKind::Press {
                     self.handle_key(key);
@@ -127,7 +129,6 @@ impl App {
     }
 }
 
-#[coverage(off)]
 #[cfg(test)]
 mod tests {
     use color_eyre::eyre::eyre;
@@ -135,11 +136,10 @@ mod tests {
     use ratatui::backend::TestBackend;
 
     use super::App;
-    use crate::logging::Logger;
 
     #[test]
     fn create() {
-        let _ = App::new(Logger::default());
+        let _ = App::new();
     }
 
     #[test]
@@ -153,7 +153,7 @@ mod tests {
 
     #[test]
     fn key_quit() {
-        let mut app = App::new(Logger::default());
+        let mut app = App::new();
         app.handle_key(KeyEvent {
             modifiers: KeyModifiers::CONTROL,
             code: KeyCode::Char('c'),
@@ -165,14 +165,14 @@ mod tests {
 
     #[test]
     fn error_open() {
-        let mut app = App::new(Logger::default());
+        let mut app = App::new();
         app.handle_error(eyre!("OH NO!"));
         assert!(app.error_popup.is_some());
     }
 
     #[test]
     fn error_close() {
-        let mut app = App::new(Logger::default());
+        let mut app = App::new();
         app.handle_error(eyre!("OH NO!"));
         app.handle_key(KeyEvent {
             modifiers: KeyModifiers::NONE,

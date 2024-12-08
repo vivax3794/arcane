@@ -3,14 +3,13 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use arcane_core::{event, Level, Result};
+use error_mancer::errors;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::Layer;
-
-use crate::prelude::*;
-use crate::project_dirs;
 
 /// How many bytes of log data to keep in memory
 const LOGGER_MEMORY_MAX: usize = 1_000_000;
@@ -78,7 +77,7 @@ pub fn setup() -> Result<Logger> {
 
     let log_path = if let Ok(log_path) = std::env::var("ARCANE_LOG") {
         PathBuf::from(log_path)
-    } else if let Some(dirs) = project_dirs() {
+    } else if let Some(dirs) = arcane_core::project_dirs() {
         dirs.data_dir().join("log.txt")
     } else {
         PathBuf::from("./log.txt")

@@ -1,19 +1,24 @@
 //! Splash screen, intro!
 
+use arcane_core::Result;
+use arcane_windows::{Window, WindowEvent, WindowID};
+use error_mancer::errors;
 use ratatui::layout::{Constraint, Layout};
-use ratatui::style::Color;
+use ratatui::style::{Color, Stylize};
 use ratatui::text::{Line, Text};
 use ratatui::widgets::Paragraph;
 
-use super::windows::WindowID;
-use crate::prelude::*;
-
 /// The plugin
-pub(super) struct SplashScreenPlugin;
+pub struct SplashScreenPlugin;
 
-impl Plugin for SplashScreenPlugin {
+arcane_core::register_plugin!(SplashScreenPlugin);
+
+impl arcane_core::Plugin for SplashScreenPlugin {
+    fn new() -> Self {
+        Self
+    }
     #[errors]
-    fn on_load(&mut self, events: &mut EventManager) -> Result<()> {
+    fn on_load(&mut self, events: &mut arcane_core::EventManager) -> Result<()> {
         events.dispatch(WindowEvent::CreateWindow(Box::new(SplashScreenWindow)));
         Ok(())
     }
@@ -31,8 +36,8 @@ impl Window for SplashScreenWindow {
     #[errors]
     fn update(
         &mut self,
-        events: &mut EventManager,
-        _plugins: &PluginStore,
+        events: &mut arcane_core::EventManager,
+        _plugins: &arcane_core::PluginStore,
         _focused: bool,
         id: WindowID,
     ) -> Result<()> {
@@ -50,7 +55,7 @@ impl Window for SplashScreenWindow {
         &self,
         frame: &mut ratatui::Frame,
         area: ratatui::prelude::Rect,
-        _plugins: &crate::plugin_manager::PluginStore,
+        _plugins: &arcane_core::PluginStore,
     ) {
         /// ASCII art of the logo
         const LOGO: &str = "

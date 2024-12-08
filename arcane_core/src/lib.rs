@@ -1,15 +1,45 @@
 //! Plugin management and creation types
 
+#![feature(trait_upcasting)]
+
 use std::any::{Any, TypeId};
 use std::cell::{Ref, RefCell, RefMut};
 
 use derive_more::Debug;
+use directories::ProjectDirs;
+pub use inventory;
+pub use tracing::{event, Level};
 
-use crate::anymap::{AnyMap, Downcast, IntoBoxed};
-use crate::prelude::*;
+/// Dispatched every frame hodling the delta from the last frame.
+#[derive(Clone, Copy, Debug)]
+pub struct DeltaTimeEvent(pub std::time::Duration);
+
+/// A key was pressed
+#[derive(Clone, Copy, Debug)]
+pub struct KeydownEvent(pub crossterm::event::KeyEvent);
+
+pub type Result<T> = color_eyre::Result<T>;
+///
+/// Get a struct that can be used to get the project directories to use
+///
+/// # Errors
+/// If missing envs
+pub fn project_dirs() -> Option<ProjectDirs> {
+    let result = ProjectDirs::from("dev", "viv", "arcane");
+    if result.is_none() {
+        event!(
+            Level::ERROR,
+            "Project Directories not found, config and similar will not be saved."
+        );
+    }
+    result
+}
 
 /// Plugin trait
 pub trait Plugin: Any {
+    fn new() -> Self
+    where
+        Self: Sized;
     /// Called on editor startup
     ///
     /// # Errors
@@ -71,7 +101,7 @@ where
     }
 }
 
-impl Downcast for dyn DynVec {
+impl arcane_anymap::Downcast for dyn DynVec {
     fn downcast<T>(this: &Self) -> Option<&T>
     where
         T: 'static,
@@ -86,7 +116,7 @@ impl Downcast for dyn DynVec {
     }
 }
 
-impl<T: DynVec> IntoBoxed<dyn DynVec> for T {
+impl<T: 'static> arcane_anymap::IntoBoxed<dyn DynVec> for Vec<T> {
     fn into(self) -> Box<dyn DynVec> {
         Box::new(self)
     }
@@ -110,15 +140,15 @@ impl<T: Any> RawEvent for T {
 pub struct EventManager {
     /// The buffer events are currently being read from
     #[debug(skip)]
-    read_buffer: AnyMap<dyn DynVec>,
+    read_buffer: arcane_anymap::AnyMap<dyn DynVec>,
     /// The buffer new events will be written to
     #[debug(skip)]
-    write_buffer: AnyMap<dyn DynVec>,
+    write_buffer: arcane_anymap::AnyMap<dyn DynVec>,
 }
 
 /// A seperated out reader for events
 #[derive(Debug)]
-pub struct EventReader<'e>(#[debug(skip)] &'e AnyMap<dyn DynVec>);
+pub struct EventReader<'e>(#[debug(skip)] &'e arcane_anymap::AnyMap<dyn DynVec>);
 impl EventReader<'_> {
     /// Same as read method on `EventManager`
     #[must_use]
@@ -135,7 +165,7 @@ impl EventReader<'_> {
 
 /// A seperated out writer for events
 #[derive(Debug)]
-pub struct EventWriter<'e>(#[debug(skip)] &'e mut AnyMap<dyn DynVec>);
+pub struct EventWriter<'e>(#[debug(skip)] &'e mut arcane_anymap::AnyMap<dyn DynVec>);
 impl EventWriter<'_> {
     /// Same as write method on `EventManager`
     pub fn dispatch<E>(&mut self, event: E)
@@ -156,12 +186,18 @@ impl EventWriter<'_> {
     }
 }
 
+impl Default for EventManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EventManager {
     /// Create a empty queue
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
-            read_buffer: AnyMap::new(),
-            write_buffer: AnyMap::new(),
+            read_buffer: arcane_anymap::AnyMap::new(),
+            write_buffer: arcane_anymap::AnyMap::new(),
         }
     }
 
@@ -214,7 +250,7 @@ impl EventManager {
     }
 
     /// Clear the current read buffer, then swap the buffers;
-    pub(crate) fn swap_buffers(&mut self) {
+    pub fn swap_buffers(&mut self) {
         for queue in self.read_buffer.iter_mut() {
             queue.clear();
         }
@@ -245,7 +281,7 @@ impl<P: Plugin> PluginWrapper for RefCell<P> {
     }
 }
 
-impl Downcast for dyn PluginWrapper {
+impl arcane_anymap::Downcast for dyn PluginWrapper {
     fn downcast<T>(this: &Self) -> Option<&T>
     where
         T: 'static,
@@ -260,10 +296,31 @@ impl Downcast for dyn PluginWrapper {
     }
 }
 
-impl<P: Plugin> IntoBoxed<dyn PluginWrapper> for RefCell<P> {
+impl<P: Plugin> arcane_anymap::IntoBoxed<dyn PluginWrapper> for RefCell<P> {
     fn into(self) -> Box<dyn PluginWrapper> {
         Box::new(self)
     }
+}
+
+pub struct RegisterPlugin {
+    constructor: fn() -> Box<dyn PluginWrapper>,
+}
+
+inventory::collect!(RegisterPlugin);
+
+impl RegisterPlugin {
+    pub const fn new<P: Plugin>() -> Self {
+        Self {
+            constructor: move || Box::new(RefCell::new(P::new())),
+        }
+    }
+}
+
+#[macro_export]
+macro_rules! register_plugin {
+    ($plugin:ident) => {
+        ::arcane_core::inventory::submit!(::arcane_core::RegisterPlugin::new::<$plugin>());
+    };
 }
 
 /// Stores all plugins in the application
@@ -271,15 +328,25 @@ impl<P: Plugin> IntoBoxed<dyn PluginWrapper> for RefCell<P> {
 pub struct PluginStore {
     /// The plugins are stored as `RefCell`s in this map
     #[debug(skip)]
-    plugins: AnyMap<dyn PluginWrapper>,
+    plugins: arcane_anymap::AnyMap<dyn PluginWrapper>,
+}
+
+impl Default for PluginStore {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PluginStore {
     /// Create a new empty store
-    fn new() -> Self {
-        Self {
-            plugins: AnyMap::new(),
+    pub fn new() -> Self {
+        let mut store = Self {
+            plugins: arcane_anymap::AnyMap::new(),
+        };
+        for plugin in inventory::iter::<RegisterPlugin>() {
+            store.register(plugin);
         }
+        store
     }
 
     /// Get a readonly reference to a plugin.
@@ -293,7 +360,7 @@ impl PluginStore {
             .and_then(|plugin| plugin.try_borrow().ok())
     }
 
-    /// Get a mutable reference to a plugin.
+    /// Get a mut reference to a plugin.
     ///
     /// # Panics
     /// Same reason as `RefCell`
@@ -305,8 +372,12 @@ impl PluginStore {
     }
 
     /// Insert a plugin into the map
-    pub(crate) fn insert<P: Plugin>(&mut self, value: P) {
+    pub fn insert<P: Plugin>(&mut self, value: P) {
         self.plugins.insert(RefCell::new(value));
+    }
+
+    pub fn register(&mut self, plugin: &RegisterPlugin) {
+        self.plugins.insert_raw((plugin.constructor)());
     }
 
     /// Iterate over immutable references to the plugins
@@ -324,9 +395,15 @@ pub struct StateManager {
     pub events: EventManager,
 }
 
+impl Default for StateManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StateManager {
     /// Create a new plugin manager
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             plugins: PluginStore::new(),
             events: EventManager::new(),
@@ -334,7 +411,7 @@ impl StateManager {
     }
 
     /// Call the handle event method of every plugin
-    pub(crate) fn update(&mut self) -> Result<()> {
+    pub fn update(&mut self) -> Result<()> {
         for plugin in self.plugins.plugins.iter() {
             if let Some(mut plugin) = plugin.borrow_mut() {
                 plugin.update(&mut self.events, &self.plugins)?;
@@ -344,7 +421,7 @@ impl StateManager {
     }
 
     /// Call the draw method of every plugin
-    pub(crate) fn draw(&self, frame: &mut ratatui::Frame, area: ratatui::prelude::Rect) {
+    pub fn draw(&self, frame: &mut ratatui::Frame, area: ratatui::prelude::Rect) {
         let mut plugins = self.plugins.plugins.iter().collect::<Vec<_>>();
         plugins.sort_by_key(|plugin| plugin.borrow().map(|p| p.z_index()).unwrap_or_default());
         for plugin in plugins {
@@ -355,7 +432,7 @@ impl StateManager {
     }
 
     /// Run on load of all plugins
-    pub(crate) fn on_load(&mut self) -> Result<()> {
+    pub fn on_load(&mut self) -> Result<()> {
         event!(Level::INFO, "Running on loads");
         for plugin in self.plugins.plugins.iter() {
             if let Some(mut plugin) = plugin.borrow_mut() {
@@ -366,7 +443,6 @@ impl StateManager {
     }
 }
 
-#[coverage(off)]
 #[cfg(test)]
 #[allow(clippy::arithmetic_side_effects)]
 mod tests {
@@ -376,8 +452,7 @@ mod tests {
     use crate::PluginStore;
 
     mod events {
-        use crate::plugin_manager::RawEvent;
-        use crate::EventManager;
+        use crate::{EventManager, RawEvent};
 
         #[test]
         fn read_empty() {
@@ -497,6 +572,9 @@ mod tests {
     struct TestPlugin(u8);
 
     impl Plugin for TestPlugin {
+        fn new() -> Self {
+            TestPlugin(1)
+        }
         fn update(
             &mut self,
             _events: &mut super::EventManager,
@@ -511,6 +589,12 @@ mod tests {
     struct ErrPlugin;
 
     impl Plugin for ErrPlugin {
+        fn new() -> Self
+        where
+            Self: Sized,
+        {
+            ErrPlugin
+        }
         fn update(
             &mut self,
             _events: &mut super::EventManager,
